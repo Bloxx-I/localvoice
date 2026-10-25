@@ -1,67 +1,81 @@
-# LocalVoice + reSpeaker
+# LocalVoice
 
-**App:** `/Users/benlamprecht/Documents/ChatGPT/Mem Mic/LocalVoice-reSpeaker.app`
+Vorlesungen und Vorträge aufnehmen, später nachhören und **vollständig lokal** transkribieren – gebaut für das
+**ReSpeaker Lite**, funktioniert aber mit jedem Mikrofon. Audio und Text verlassen den Rechner nie.
 
-**Python-Quellcode:** `/Users/benlamprecht/Documents/ChatGPT/Mem Mic/LocalVoiceCombo/src/`
+## Installation
 
-Starten:
+### Windows 10/11
 
-```sh
-open "/Users/benlamprecht/Documents/ChatGPT/Mem Mic/LocalVoice-reSpeaker.app"
-```
+1. Auf GitHub **Code → Download ZIP**, entpacken.
+2. **`Installieren-Windows.cmd`** doppelklicken.
 
-Direkter Python-Start (auch zum Entwickeln):
+Das Skript installiert Python, alle Pakete und das Sprachmodell nach `%LOCALAPPDATA%\LocalVoice` und legt
+**LocalVoice** auf dem Desktop und im Startmenü an. Mit NVIDIA-Grafikkarte wird automatisch die schnelle
+GPU-Version (Qwen3-ASR 1.7B) eingerichtet, sonst das kleinere Modell für den Prozessor (Qwen3-ASR 0.6B).
+Einmalig nötig: Internet und etwa 3–6 GB Platz. Aufnahmen landen in `Dokumente\LocalVoice Aufnahmen`.
 
-```sh
-cd "/Users/benlamprecht/Documents/ChatGPT/Mem Mic"
-LocalVoiceCombo/.venv/bin/python LocalVoiceCombo/src/combined.py
-```
+Entfernen: `Deinstallieren-Windows.cmd` – Aufnahmen bleiben erhalten.
 
-## Zwei Arbeitsweisen
+### macOS (Apple-Chip)
 
-1. **Live verbessern + fortlaufender Text:** DeepFilterNet verarbeitet 10-ms-Audioblöcke. Qwen3-ASR lädt einmal pro Aufnahme und transkribiert fortlaufend Abschnitte von wahlweise 3, 5 oder 10 Sekunden. Die Abschnitte überlappen um 0,5 Sekunden. Der Text wächst schon während der Aufnahme. Modelllade- und Rechenzeit kommen hinzu; Rückstau wird angezeigt. Dies ist abschnittsweise Transkription, kein ASR-Modell mit nativer wortweiser Streaming-Schnittstelle.
-2. **Erst aufnehmen · danach verarbeiten:** Während der Aufnahme wird kein DeepFilterNet-Modell geladen. Nach Stopp wird eine verbesserte Version erzeugt und bei aktivierter Transkription der Text berechnet. Vorhandene Originale und vorherige Versionen bleiben bestehen.
+`Installieren-Mac.command` doppelklicken (beim ersten Mal ggf. Rechtsklick → Öffnen). Danach liegt
+**LocalVoice.app** in `~/Programme`. Die Spracherkennung läuft dort über MLX.
 
-„Live abhören“ gibt das aktuelle Audio optional über den gewählten Ausgang aus. Kopfhörer eignen sich dafür; Lautsprecher können Rückkopplungen verursachen. „Abhörpegel“ verändert die Wiedergabe, nicht die Aufnahme. Im nachträglichen Modus wird beim Live-Abhören das noch nicht zusätzlich verbesserte Signal ausgegeben.
+## Bedienung
 
-## Eingangsqualität
+Oben rechts schaltest du zwischen **Einfach** und **Experte** um.
 
-Jeder aktivierte Eingang wird mit **allen angebotenen Kanälen** in seiner aktuellen nativen Abtastrate zusätzlich als `*_inputN_native.wav` gespeichert. Das PCM32-Containerformat erfindet keine zusätzlichen Hardware-Bits. Die Originaldatei erhält den USB-Eingang vor Gain, Kanalauswahl, Mischbetrieb und DeepFilterNet.
+**Einfach** – für alle:
+- **Aufnehmen:** großer Knopf (⌘R / Strg+R). Der ReSpeaker wird automatisch gewählt, der Pegel automatisch angepasst.
+  Nach dem Stopp entstehen von selbst die Hörspur und das Transkript.
+- **Nachhören:** wie ein Podcast – ±15/30 s (← →), Tempo 1–2× ohne Mickymaus-Stimme, der gesprochene Absatz wird
+  im Text hervorgehoben, Klick auf einen Absatz springt dorthin. Die App merkt sich, wo du aufgehört hast.
+- **Aufnahmen:** Liste links mit Suche in Text und Datum.
+- **Export:** Markdown, SRT oder WebVTT.
 
-Der angeschlossene ReSpeaker Lite meldet über Core Audio am 25.10.2026 ausschließlich **16.000 Hz**. Echte 48 kHz sind mit seinem aktuellen USB-Profil nicht verfügbar. Das MacBook-Mikrofon liefert aktuell echte 48 kHz. Die App ändert keine Firmware. Der USB-Test zeigt nur ausgelesene native Abtastraten an und lehnt nicht unterstützte Hardware-Raten ab.
+**Experte** zeigt zusätzlich: Mikrofonauswahl mit Auto-Pegel/Gain/Kanal/Delay pro Mikrofon, Live-Text während der
+Aufnahme, Filterstärke und „Neu verbessern“, Textquelle, **Thema/Fachbegriffe** für die Erkennung, Ausgabegerät,
+**Pausen überspringen**, **Merker** (Taste M), A/B-Vergleich mit dem Original (Taste O halten) und den
+Reiter **reSpeaker · USB-Test**.
 
-DeepFilterNet benötigt 48 kHz. Die Vergleichsspuren `*_original.wav` und `*_clean.wav` sind deshalb Mono-PCM32 mit 48 kHz; sie sind von der nativen Eingangsspur abgeleitet. „Original halten“ vergleicht das Board-/Mikrofonsignal vor zusätzlicher KI mit der KI-Spur an derselben Abspielposition. Der Originalvergleich berücksichtigt die Modellverzögerung. Für unveränderte volle Eingangskanäle die separate native WAV verwenden.
+## Wie es arbeitet
 
-## Integrierte Mem-Mic-Funktionen
+- **ReSpeaker Lite:** Die USB-Firmware liefert ein bereits vom Board bearbeitetes Signal und kopiert es auf beide
+  Kanäle (gemessen: bitgleich). LocalVoice erkennt das und speichert die native Spur nur einmal.
+- **Auto-Pegel** am Eingang: hebt leise, entfernte Sprecher an, ohne in Pausen das Rauschen hochzuziehen.
+- **Zwei Spuren:** Die **Hörspur** wird mit DeepFilterNet entrauscht (FLAC, 48 kHz). Die **Textspur** nutzt das
+  unveränderte Board-Signal mit Hochpass und Auto-Pegel – im Vergleich mit echten Aufnahmen erkannte Qwen darauf
+  in 9 von 10 Fällen mehr und richtiger als auf der gefilterten Spur.
+- **Schnitte in Sprechpausen** (3–25 s) statt starr alle 20 s, damit keine Wörter zerschnitten werden. Daraus
+  kommen auch die Zeitmarken für Mitlesen und Untertitel (Abschnittszeiten, keine Wortzeitstempel).
+- Speicher: etwa **0,6 GB pro 90 Minuten** (native Spur + Hörspur).
 
-Der zweite Reiter **reSpeaker · USB-Test** enthält Pegel/Wellenform pro USB-Kanal, Ruhepegelmessung, vollständige USB-WAV-Aufnahme, Kanalwahl beim Anhören, Ausgangsauswahl, Testton und USB-Diagnose. „Letzte USB-Aufnahme im Studio verbessern“ übernimmt eine gewählte Spur oder den Mix in LocalVoice. „USB-WAV ins Studio …“ öffnet auch bereits gespeicherte Dateien.
+Dateien pro Aufnahme: `*_input1_native.wav` (unverändert), `*_clean.flac` (Hörspur), `*_clean.txt`,
+`*_clean.transcript.json` (Abschnitte, Sprechpausen), `*.listen.json` (Merker, Position), `*.json` (Metadaten).
 
-Der Reiterwechsel wird während Aufnahme oder Verarbeitung gesperrt, damit nicht zwei Recorder oder widersprüchliche Einstellungen gleichzeitig laufen. Eine laufende reine Pegelanzeige wird beim Wechsel ins Studio beendet. Der USB-Test steuert keine undokumentierten DSP-/RGB-Register. Originalaufnahmen werden nicht überschrieben.
-
-## Lokal gespeicherte Dateien
-
-- `LocalVoiceCombo/Aufnahmen/`: Studio-Aufnahmen, native Eingänge, Versionen, Metadaten, Text und Live-Abschnitte.
-- `LocalVoiceCombo/recordings/`: neue USB-Testaufnahmen. Bisherige Testaufnahmen liegen zusätzlich im übergeordneten `recordings/` und können importiert werden.
-- `LocalVoiceCombo/Logs/app.log`: Start-/Fehlerprotokoll der App.
-- `LocalVoiceCombo/Pruefaufnahmen/`: die bei der Entwicklung erzeugten kurzen Prüfaufnahmen.
-
-Die alte LocalVoice-Installation bleibt unverändert. Die neue App nutzt deren bestehende Python-Umgebung und ASR-Modelle über lokale Verknüpfungen. `LocalVoiceCombo/.venv` und `LocalVoiceCombo/models/qwen3-asr` zeigen deshalb auf die alte Installation. Diese Basis nicht löschen oder verschieben, solange sie als Laufzeit dient. Es wurden keine zusätzlichen ASR-Modelle heruntergeladen. Die ASR-Prozesse arbeiten offline und sperren ausgehende Verbindungen.
-
-## Was du testen kannst (jeweils unter zwei Minuten)
-
-1. **Live-Text:** ReSpeaker wählen, „Live verbessern + fortlaufender Text“, „Transkription aktivieren“. 15 Sekunden sprechen. Der Text sollte vor Stopp wachsen; danach wird auch der Rest gespeichert.
-2. **Nachträglich:** „Erst aufnehmen · danach verarbeiten“ wählen, 10 Sekunden sprechen, stoppen. Klangverbesserung und Text sollten erst nach Stopp beginnen.
-3. **A/B:** Eine fertige Aufnahme abspielen, „Original halten“ gedrückt halten und loslassen. Die Wiedergabe sollte ohne Positionssprung wechseln.
-4. **USB-Test/Mute:** Im USB-Reiter Pegel starten, sprechen und die Mute-Taste am Board drücken. Danach eine WAV speichern und mit dem Studio-Knopf übernehmen.
-5. **Qualität:** Eine `*_native.wav` prüfen: beim aktuellen ReSpeaker 16 kHz, zwei Kanäle, PCM32; Vergleichsspuren 48 kHz, mono, PCM32. Bei MacBook-Eingang soll die native Datei 48 kHz enthalten.
-
-## Entwicklung und Prüfungen
-
-`src/combined.py`: gemeinsame Oberfläche, Reiter und Importübergabe. `src/studio_extension.py`: Betriebsmodi und Live-Text-Steuerung. `src/engine.py`: native Aufnahme, zusätzliche KI, Abschnittsbildung. `src/stream_transcribe.py`: persistenter lokaler ASR-Prozess. `src/usb_panel.py` und `src/usb_audio.py`: integrierter USB-Test. `src/playback.py`: synchroner Originalvergleich und Ausgangsanpassung.
+## Entwicklung
 
 ```sh
-LocalVoiceCombo/.venv/bin/python -m unittest discover -s LocalVoiceCombo/tests -v
-zsh LocalVoiceCombo/build.sh
+.venv/bin/python src/combined.py                      # starten
+.venv/bin/python -m unittest discover -s tests -v     # Tests
+zsh build.sh ~/Applications/LocalVoice.app            # macOS-App bauen
 ```
 
-Quellcodeänderungen sind nach einem App-Neustart aktiv. Ein Neubau ist nur für Änderungen am nativen Starter bzw. Bundle nötig. Die Hardware-Prüfskripte starten echte lokale Aufnahmen; nicht während einer wichtigen Aufnahme parallel ausführen.
+| Datei | Aufgabe |
+|---|---|
+| `src/combined.py` | Hauptfenster, Einfach/Experte, USB-Reiter, Import |
+| `src/app.py`, `src/studio_extension.py` | Studio: Aufnahme, Ansichten, Ablauf |
+| `src/listen.py` | Nachhören-Ansicht |
+| `src/engine.py` | Aufnahme, Auto-Pegel, DeepFilterNet (nativ auf macOS/Linux, ONNX auf Windows) |
+| `src/lecture.py` | Textspur, Pausenerkennung, Abschnitte, Dateizuordnung |
+| `src/asr.py`, `src/transcribe.py`, `src/stream_transcribe.py` | Qwen3-ASR über MLX (Mac) oder PyTorch (Windows) |
+| `src/enhance_recording.py`, `src/import_usb.py` | Hörspur erzeugen, USB-WAV übernehmen |
+| `src/library.py` | Aufnahmeliste, Export |
+| `installer/` | Windows-Installation, Icon |
+
+Jeder Push startet einen GitHub-Actions-Lauf, der die Windows-Installation auf einem echten Windows-Rechner
+durchspielt: Installer, Tests, Sprache erzeugen → Hörspur → Transkript, App-Start, Deinstallation.
+
+Die Transkription arbeitet offline und blockiert ausgehende Verbindungen; nur der einmalige Modell-Download
+braucht Internet.

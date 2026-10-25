@@ -178,7 +178,7 @@ class ListenView(QWidget):
         if not self.segments:
             self.text.setHtml('<p style="color:#8d9bb2">Noch kein Transkript. Du kannst trotzdem anhören.</p>')
             return
-        blocks = [f'<p style="margin:0 0 14px 0"><span style="color:#6ee7d3;font-family:Menlo;font-size:11px">'
+        blocks = [f'<p style="margin:0 0 14px 0"><span style="color:#6ee7d3;font-family:Menlo,Consolas;font-size:11px">'
                   f'{clock(a)}</span>&nbsp;&nbsp;{html.escape(t)}</p>' for a, _, t in self.segments]
         self.text.setHtml(''.join(blocks))
 

@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
-let root = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("LocalVoiceCombo")
+// build.sh writes the program folder into Resources/root.txt; older bundles sit next to "LocalVoiceCombo".
+let rootFile = Bundle.main.url(forResource: "root", withExtension: "txt")
+let rootPath = rootFile.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines)
+let root = rootPath.map { URL(fileURLWithPath: $0) } ?? Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("LocalVoiceCombo")
 let task = Process()
 task.executableURL = root.appendingPathComponent(".venv/bin/python")
 task.arguments = ["-u", root.appendingPathComponent("src/combined.py").path]

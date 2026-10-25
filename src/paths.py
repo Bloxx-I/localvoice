@@ -17,5 +17,9 @@ def default_recordings():
     return ROOT/'Aufnahmen'
 
 
+HOST = 'diesem PC' if sys.platform == 'win32' else 'deinem Mac'
+FILE_BROWSER = 'Explorer' if sys.platform == 'win32' else 'Finder'
+
+
 def asr_ready():
     return (ASR_MODEL/'.ready.json').exists()

@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from app import STYLE
 from studio_extension import IntegratedStudio
 from app_core import ROOT
+from paths import HOST
 from usb_panel import Window as USBWindow
 from usb_audio import audio_devices
 
@@ -82,7 +83,7 @@ class Combined(QMainWindow):
         self.import_button.setToolTip('Eine gespeicherte USB-Aufnahme im Studio verbessern. Die WAV bleibt unverändert.')
         self.import_button.clicked.connect(self.choose_usb)
         action_row.addWidget(self.import_button)
-        local = QLabel('●  Lokal auf deinem Mac')
+        local = QLabel(f'●  Lokal auf {HOST}')
         local.setObjectName('local')
         local.setToolTip('Native Quelle bleibt erhalten · Audio und Text verlassen diesen Mac nicht.')
         action_row.addWidget(local)
@@ -284,10 +285,16 @@ class Combined(QMainWindow):
 
 
 if __name__ == '__main__':
+    if sys.stdout is None or sys.stderr is None:
+        # Started without a console (pythonw on Windows): keep a log for support.
+        (ROOT/'Logs').mkdir(exist_ok=True)
+        sys.stdout = sys.stderr = open(ROOT/'Logs'/'app.log', 'a', encoding='utf-8', buffering=1)
     application = QApplication(sys.argv)
     application.setApplicationName('LocalVoice + reSpeaker')
     application.setOrganizationName('LocalVoiceCombo')
     application.setStyle('Fusion')
+    from PySide6.QtGui import QIcon
+    application.setWindowIcon(QIcon(str(ROOT/'installer'/'LocalVoice.png')))
     application.setStyleSheet(STYLE)
     window = Combined()
     window.show()

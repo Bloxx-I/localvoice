@@ -1,0 +1,82 @@
+name: Windows-Installation
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  install-and-run:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installationsort festlegen
+        shell: powershell
+        run: Add-Content $env:GITHUB_ENV "APP=$env:RUNNER_TEMP\LocalVoice"
+
+      - name: Installer ausführen (wie Doppelklick, kleines Modell)
+        shell: powershell
+        run: .\installer\install-windows.ps1 -InstallDir "$env:APP" -Model Qwen/Qwen3-ASR-0.6B
+
+      - name: Verknüpfungen vorhanden
+        shell: powershell
+        run: |
+          foreach ($f in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+            if (-not (Test-Path (Join-Path $f 'LocalVoice.lnk'))) { throw "Verknuepfung fehlt in $f" }
+          }
+
+      - name: Unit-Tests
+        shell: powershell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          & "$env:APP\.venv\Scripts\python.exe" -m unittest discover -s "$env:APP\tests" -v
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Ende-zu-Ende – Sprache erzeugen, Hörspur bauen, transkribieren
+        shell: powershell
+        run: |
+          $py = "$env:APP\.venv\Scripts\python.exe"
+          $dir = "$env:RUNNER_TEMP\e2e"; New-Item -ItemType Directory -Force $dir | Out-Null
+          $stem = 'LocalVoice_2026-01-01_10-00-00_1'
+          $wav = "$dir\${stem}_input1_native.wav"
+          Add-Type -AssemblyName System.Speech
+          $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $format = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 16000, ([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), ([System.Speech.AudioFormat.AudioChannel]::Mono)
+          $voice.SetOutputToWaveFile($wav, $format)
+          $voice.Speak('Hello, this is a test of the lecture recorder. Today we talk about thermodynamics and the study of heat.')
+          $voice.Dispose()
+          Set-Location $env:APP
+          & $py src\enhance_recording.py $wav --stem $stem; if ($LASTEXITCODE) { exit 1 }
+          & $py src\transcribe.py "$dir\${stem}_clean.flac" --model models\qwen3-asr --language en; if ($LASTEXITCODE) { exit 1 }
+          $text = Get-Content "$dir\${stem}_clean.txt" -Raw
+          Write-Host "Transkript: $text"
+          if ($text -notmatch '(?i)test') { throw 'Transkript enthaelt den erwarteten Text nicht.' }
+
+      - name: App startet ohne Absturz
+        shell: powershell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $app = Start-Process "$env:APP\.venv\Scripts\python.exe" -ArgumentList "`"$env:APP\src\combined.py`"" -WorkingDirectory $env:APP -PassThru -RedirectStandardError "$env:RUNNER_TEMP\gui-err.txt"
+          Start-Sleep -Seconds 20
+          if ($app.HasExited) { Get-Content "$env:RUNNER_TEMP\gui-err.txt"; throw "App beendet mit Code $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+          Write-Host 'App lief 20 Sekunden stabil.'
+
+      - name: Deinstallation
+        shell: powershell
+        run: |
+          .\installer\uninstall-windows.ps1 -InstallDir "$env:APP" -Force
+          if (Test-Path "$env:APP") { throw 'Installationsordner noch vorhanden.' }
+
+      - name: Logs bei Fehler
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            ${{ runner.temp }}\gui-err.txt
+            ${{ runner.temp }}\LocalVoice\Logs
+          if-no-files-found: ignore

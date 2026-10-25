@@ -1,6 +1,12 @@
 """Download the Qwen3-ASR model once; progress goes to models/download-status.json."""
 import argparse
 import json
+import os
+import sys
+
+# The app launcher runs offline; this one-time download is the only online step.
+for key in ('HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE'):
+    os.environ.pop(key, None)
 import threading
 import time
 from pathlib import Path
@@ -8,11 +14,18 @@ from pathlib import Path
 from asr import default_repo
 from paths import ASR_MODEL, DOWNLOAD_STATUS
 
+CONSOLE = False
+
 
 def status(**data):
     DOWNLOAD_STATUS.parent.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_STATUS.write_text(json.dumps(data, ensure_ascii=False))
-    print(json.dumps(data, ensure_ascii=False), flush=True)
+    if CONSOLE:
+        text = {'downloading': f"Sprachmodell {data.get('repo', '')}: {data.get('percent', 0):5.1f} %",
+                'ready': 'Sprachmodell bereit.', 'error': 'Fehler: '+data.get('message', '')}[data['state']]
+        print('\r'+text, end='\n' if data['state'] != 'downloading' else '', flush=True)
+    else:
+        print(json.dumps(data, ensure_ascii=False), flush=True)
 
 
 def folder_bytes(folder):
@@ -53,5 +66,11 @@ def download(repo=None, target=ASR_MODEL):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--repo', help='z. B. Qwen/Qwen3-ASR-0.6B; Standard: passend zu diesem Rechner')
+    parser.add_argument('--console', action='store_true', help='lesbarer Fortschritt für Installationsskripte')
     args = parser.parse_args()
-    download(args.repo)
+    CONSOLE = args.console
+    try:
+        download(args.repo)
+    except Exception as exc:
+        print(f'\nDownload fehlgeschlagen: {exc}', file=sys.stderr)
+        sys.exit(1)

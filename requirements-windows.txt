@@ -1,0 +1,3 @@
+# Windows: Qwen3-ASR via PyTorch. The installer adds CUDA PyTorch when an NVIDIA GPU is present.
+-r requirements.txt
+qwen-asr==0.0.6

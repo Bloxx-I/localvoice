@@ -12,7 +12,12 @@ from engine import Enhancer, FRAME, pcm
 from playback import ComparisonPlayer
 
 
+import engine
+native_only = unittest.skipUnless(engine.NATIVE_DF, 'misst das native DeepFilterNet (macOS/Linux)')
+
+
 class AudioTests(unittest.TestCase):
+    @native_only
     def test_model_causal_delay_and_frame_continuity(self):
         # A 1-dB attenuation limit preserves correlation while exercising the
         # STFT pipeline. Zero attenuation is a special direct bypass in libdf.
@@ -47,6 +52,7 @@ class AudioTests(unittest.TestCase):
         self.assertEqual(player.position, 1440)
         self.assertAlmostEqual(float(out[-1,0]), .1, places=5)
 
+    @native_only
     def test_studio_model_delay_matches_original_alignment(self):
         x = np.random.default_rng(23).normal(0,.08,80*FRAME).astype(np.float32)
         enhancer = Enhancer(1,attenuation=1,quality='studio')

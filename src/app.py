@@ -16,7 +16,7 @@ import lecture
 import library
 from app_core import Window, ROOT
 from listen import ListenView
-from paths import asr_ready, default_recordings
+from paths import FILE_BROWSER, HOST, asr_ready, default_recordings
 from engine import input_devices
 from playback import ComparisonPlayer
 
@@ -172,7 +172,7 @@ class Studio(Window):
         header.addWidget(label('LocalVoice','brand'))
         header.addWidget(label('STUDIO','eyebrow'))
         header.addStretch()
-        header.addWidget(label('●  Lokal auf deinem Mac','local'))
+        header.addWidget(label(f'●  Lokal auf {HOST}','local'))
         shell.addWidget(self.header_widget)
         workspace = QHBoxLayout()
         workspace.setSpacing(16)
@@ -249,7 +249,7 @@ class Studio(Window):
         self.folder_button = QPushButton('Ändern …')
         self.folder_button.clicked.connect(self.choose_folder)
         folderrow.addWidget(self.folder_button)
-        finder = QPushButton('Im Finder ↗')
+        finder = QPushButton(f'Im {FILE_BROWSER} ↗')
         finder.clicked.connect(lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.folder))))
         folderrow.addWidget(finder)
         fl.addLayout(folderrow)
@@ -1005,8 +1005,8 @@ QLabel#sectionCaps {font-size:10px; font-weight:700; color:#7f8ea8; letter-spaci
 QLabel#hero {font-size:20px; font-weight:650; letter-spacing:-.4px;}
 QLabel#muted {color:#8d9bb2; font-size:11px;}
 QLabel#micMeta {color:#76849b; font-size:10px; padding-left:25px;}
-QLabel#time {color:#b7c3d6; font-family:Menlo; font-size:11px;}
-QLabel#clock {font-family:Menlo; font-size:30px; font-weight:500; color:#f2f6fc;}
+QLabel#time {color:#b7c3d6; font-family:Menlo,Consolas; font-size:11px;}
+QLabel#clock {font-family:Menlo,Consolas; font-size:30px; font-weight:500; color:#f2f6fc;}
 QLabel#stateBadge {color:#6ee7d3; background:#10302c; border-radius:9px; padding:3px 9px; font-size:9px; font-weight:700; letter-spacing:1px;}
 QLabel#stateBadge[state="recording"] {color:#ffd9dc; background:#4a1820;}
 QLabel#stateBadge[state="busy"] {color:#2c1d05; background:#f5c26b;}
