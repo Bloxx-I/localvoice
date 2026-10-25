@@ -5,7 +5,7 @@ from pathlib import Path
 
 import sounddevice as sd
 from PySide6.QtCore import QProcess, QTimer
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QInputDialog, QLabel, QMainWindow, QMessageBox, QPushButton, QSlider, QTabWidget,
     QVBoxLayout, QWidget, QScrollArea, QLayout)
 from PySide6.QtCore import Qt
@@ -63,6 +63,21 @@ class Combined(QMainWindow):
         action_row = QHBoxLayout(actions)
         action_row.setContentsMargins(0, 4, 18, 0)
         action_row.setSpacing(12)
+        mode = QFrame()
+        mode.setObjectName('segment')
+        mode_row = QHBoxLayout(mode)
+        mode_row.setContentsMargins(3, 3, 3, 3)
+        mode_row.setSpacing(2)
+        self.mode_group = QButtonGroup(self)
+        for index, text in enumerate(('Einfach', 'Experte')):
+            button = QPushButton(text)
+            button.setObjectName('segmentButton')
+            button.setCheckable(True)
+            button.setMinimumWidth(78)
+            self.mode_group.addButton(button, index)
+            mode_row.addWidget(button)
+        self.mode_group.idClicked.connect(lambda index: self.set_expert(index == 1))
+        action_row.addWidget(mode)
         self.import_button = QPushButton('USB-WAV importieren …')
         self.import_button.setToolTip('Eine gespeicherte USB-Aufnahme im Studio verbessern. Die WAV bleibt unverändert.')
         self.import_button.clicked.connect(self.choose_usb)
@@ -96,7 +111,19 @@ class Combined(QMainWindow):
         self.timer.timeout.connect(self.update_controls)
         self.timer.start(120)
         ready = ROOT/'models/qwen3-asr/.ready.json'
-        self.studio.stt_status.setText('Qwen3-ASR · lokales Modell bereit' if ready.exists() else 'Kein lokales ASR-Modell vorhanden.')
+        self.studio.stt_status.setText('Qwen3-ASR · lokales Modell bereit' if ready.exists() else 'Für Text einmalig „Sprachmodell laden“ wählen.')
+        self.set_expert(self.studio.expert)
+
+    def set_expert(self, on):
+        if not on and self.tabs.currentIndex() != 0:
+            if self.busy() or self.usb.capture.recording:
+                self.mode_group.button(1).setChecked(True)
+                return
+            self.tabs.setCurrentIndex(0)
+        self.mode_group.button(1 if on else 0).setChecked(True)
+        self.studio.set_expert(on)
+        self.tabs.setTabVisible(1, on)
+        self.import_button.setVisible(on)
 
     def add_output_controls(self):
         box = self.studio.output_box
@@ -126,6 +153,7 @@ class Combined(QMainWindow):
         self.studio.player.close()
         self.studio.player.device = self.output.currentData()
         self.studio.monitor_device = self.output.currentData()
+        self.studio.listen.set_output(self.output.currentText())
 
     def busy(self):
         return bool(self.studio.recorder or self.studio.voxtral or self.studio.enhance_process or self.studio.live_stt or self.import_process)
@@ -144,6 +172,7 @@ class Combined(QMainWindow):
             self._usb_toggle()
         self.usb.stop_playback()
         self.studio.player.close()
+        self.studio.listen.stop()
         self.current_tab = index
 
     def toggle_usb_live(self):
@@ -224,10 +253,12 @@ class Combined(QMainWindow):
             self.statusBar().showMessage('USB-Import: '+(self.import_errors[-350:] or 'Prozess konnte nicht starten.'))
             return
         try:
-            result = json.loads(self.import_output)
-            self.studio.load_pair(result['clean'], result['original'])
-            self.studio.status.setText('USB-Aufnahme übernommen · Board-Original und zusätzlich verbesserte Spur bereit.')
-            self.statusBar().showMessage('Import fertig. „Original halten“ vergleicht ohne Positionssprung.', 12000)
+            result = json.loads(self.import_output.strip().splitlines()[-1])
+            self.studio.load_pair(result['clean'], None)
+            self.studio.status.setText('USB-Aufnahme übernommen · Hörspur bereit.')
+            self.statusBar().showMessage('Import fertig.', 8000)
+            if (ROOT/'models/qwen3-asr/.ready.json').exists():
+                self.studio.transcribe()
         except Exception as exc:
             self.statusBar().showMessage('USB-Import konnte nicht geladen werden: '+str(exc))
 
@@ -247,6 +278,7 @@ class Combined(QMainWindow):
         self.usb.capture.stop()
         self.usb.stop_playback()
         self.studio.player.close()
+        self.studio.listen.stop()
         self.studio.save_preferences()
         event.accept()
 

@@ -12,8 +12,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
     QSizePolicy, QGridLayout, QLineEdit, QListWidget, QListWidgetItem, QStackedWidget,
     QAbstractSpinBox, QMenu, QFileDialog, QButtonGroup)
 
+import lecture
 import library
 from app_core import Window, ROOT
+from listen import ListenView
+from paths import asr_ready, default_recordings
 from engine import input_devices
 from playback import ComparisonPlayer
 
@@ -146,7 +149,11 @@ class Studio(Window):
         self.enhance_process = None
         self.rows = []
         self.wet = 1.0
-        self.folder = ROOT/'Aufnahmen'
+        self.expert = False
+        self.player_loaded = None
+        self.auto_boxes = {}
+        self.download_process = None
+        self.folder = default_recordings()
         self.config_path = ROOT/'preferences.json'
         try:
             self.preferences = json.loads(self.config_path.read_text())
@@ -190,6 +197,7 @@ class Studio(Window):
         head.addWidget(self.refresh_button)
         il.addLayout(head)
         self.table = QWidget()
+        self.table.setObjectName('clear')
         self.sources_layout = QVBoxLayout(self.table)
         self.sources_layout.setContentsMargins(0,0,0,0)
         self.sources_layout.setSpacing(6)
@@ -204,6 +212,15 @@ class Studio(Window):
         processing, self.processing_box = section('VERARBEITUNG')
         self.auto_transcribe = QCheckBox('Nach Stopp transkribieren')
         self.processing_box.addWidget(self.auto_transcribe)
+        self.text_source = QComboBox()
+        self.text_source.addItem('Text aus Board-Signal (empfohlen)','board')
+        self.text_source.addItem('Text aus verbesserter Spur','clean')
+        self.text_source.setToolTip('Die Spracherkennung trifft auf dem unbearbeiteten Signal meist besser als auf der gefilterten Hörspur.')
+        self.processing_box.addWidget(self.text_source)
+        self.context_edit = QLineEdit()
+        self.context_edit.setPlaceholderText('Thema / Fachbegriffe (optional)')
+        self.context_edit.setToolTip('Hilft der Erkennung bei Namen und Fachwörtern, z. B. „Thermodynamik, Entropie, Carnot“.')
+        self.processing_box.addWidget(self.context_edit)
         side.addWidget(processing)
 
         sound, sl = section('SPRACHVERBESSERUNG')
@@ -248,7 +265,18 @@ class Studio(Window):
         cl = QVBoxLayout(column)
         cl.setContentsMargins(0,0,0,0)
         cl.setSpacing(10)
+        device = card('deviceCard')
+        dl = QVBoxLayout(device)
+        dl.setContentsMargins(14,10,14,10)
+        dl.setSpacing(2)
+        self.device_label = label('Mikrofon wird gesucht …','deviceTitle')
+        self.device_note = label('','muted')
+        self.device_note.setWordWrap(True)
+        dl.addWidget(self.device_label)
+        dl.addWidget(self.device_note)
+        cl.addWidget(device)
         switch = QFrame()
+        self.side_switch = switch
         switch.setObjectName('segment')
         sw = QHBoxLayout(switch)
         sw.setContentsMargins(3,3,3,3)
@@ -271,9 +299,37 @@ class Studio(Window):
 
         # Main column: record, listen, compare, read.
         center_panel = QWidget()
-        center = QVBoxLayout(center_panel)
+        main = QVBoxLayout(center_panel)
+        main.setContentsMargins(0,0,0,0)
+        main.setSpacing(10)
+        views = QFrame()
+        views.setObjectName('segment')
+        vl = QHBoxLayout(views)
+        vl.setContentsMargins(3,3,3,3)
+        vl.setSpacing(2)
+        self.view_group = QButtonGroup(self)
+        for index, text in enumerate(('●  Aufnehmen', '▶  Nachhören')):
+            button = QPushButton(text)
+            button.setObjectName('segmentButton')
+            button.setCheckable(True)
+            button.setChecked(index == 0)
+            button.setMinimumWidth(150)
+            self.view_group.addButton(button, index)
+            vl.addWidget(button)
+        self.view_group.idClicked.connect(self.show_view)
+        viewrow = QHBoxLayout()
+        viewrow.addWidget(views)
+        viewrow.addStretch()
+        main.addLayout(viewrow)
+        self.views = QStackedWidget()
+        main.addWidget(self.views,1)
+        record_page = QWidget()
+        center = QVBoxLayout(record_page)
         center.setContentsMargins(0,0,0,0)
         center.setSpacing(14)
+        self.views.addWidget(record_page)
+        self.listen = ListenView()
+        self.views.addWidget(self.listen)
         workspace.addWidget(center_panel,1)
         recording = card('heroCard')
         rl = QVBoxLayout(recording)
@@ -297,7 +353,14 @@ class Studio(Window):
         self.status = label('Bereit für deine nächste Aufnahme.','muted')
         self.status.setWordWrap(True)
         text.addWidget(self.status)
+        self.level_hint = label('','levelHint')
+        text.addWidget(self.level_hint)
         controls.addLayout(text,1)
+        self.listen_button = QPushButton('▶  Nachhören')
+        self.listen_button.setObjectName('primary')
+        self.listen_button.clicked.connect(lambda:self.show_view(1))
+        self.listen_button.hide()
+        controls.addWidget(self.listen_button)
         self.timer_label = label('00:00.0','clock')
         controls.addWidget(self.timer_label)
         rl.addLayout(controls)
@@ -306,11 +369,19 @@ class Studio(Window):
         self.output_meter.setRange(0,100)
         self.output_meter.setTextVisible(False)
         rl.addWidget(self.output_meter)
-        self.stream_row = QHBoxLayout()
-        rl.addLayout(self.stream_row)
+        self.stream_panel = QWidget()
+        self.stream_panel.setObjectName('clear')
+        self.stream_row = QHBoxLayout(self.stream_panel)
+        self.stream_row.setContentsMargins(0,0,0,0)
+        rl.addWidget(self.stream_panel)
         self.waveform = Waveform()
         self.waveform.seekRequested.connect(self.player.seek)
         rl.addWidget(self.waveform,1)
+        self.compare_panel = QWidget()
+        self.compare_panel.setObjectName('clear')
+        compare = QVBoxLayout(self.compare_panel)
+        compare.setContentsMargins(0,0,0,0)
+        compare.setSpacing(8)
         playrow = QHBoxLayout()
         playrow.setSpacing(8)
         self.play_button = QPushButton('▶  Abspielen')
@@ -334,18 +405,19 @@ class Studio(Window):
         playrow.addWidget(self.file_label)
         self.play_time = label('0:00 / 0:00','time')
         playrow.addWidget(self.play_time)
-        rl.addLayout(playrow)
+        compare.addLayout(playrow)
         self.seek = QSlider(Qt.Orientation.Horizontal)
         self.seek.setRange(0,0)
         self.seek.sliderMoved.connect(lambda v:self.player.seek(v/1000))
-        rl.addWidget(self.seek)
+        compare.addWidget(self.seek)
         self.file_actions = QHBoxLayout()
         self.open_pair = QPushButton('Aufnahme öffnen …')
         self.open_pair.setObjectName('link')
         self.open_pair.clicked.connect(self.open_recording)
         self.file_actions.addWidget(self.open_pair)
         self.file_actions.addStretch()
-        rl.addLayout(self.file_actions)
+        compare.addLayout(self.file_actions)
+        rl.addWidget(self.compare_panel)
         center.addWidget(recording,3)
 
         transcriptcard = card()
@@ -354,7 +426,7 @@ class Studio(Window):
         tl.setSpacing(8)
         th = QHBoxLayout()
         th.addWidget(label('Transkript','section'))
-        th.addWidget(label('QWEN3-ASR 1.7B','eyebrow'))
+        th.addWidget(label('QWEN3-ASR','eyebrow'))
         th.addStretch()
         self.language = QComboBox()
         for name,code in [('Deutsch','de'),('English','en'),('Français','fr'),('Español','es')]: self.language.addItem(name,code)
@@ -368,6 +440,12 @@ class Studio(Window):
         self.cancel_transcribe.setEnabled(False)
         self.cancel_transcribe.hide()
         th.addWidget(self.cancel_transcribe)
+        self.download_button = QPushButton('Sprachmodell laden')
+        self.download_button.setObjectName('primary')
+        self.download_button.setToolTip('Einmalig: Qwen3-ASR herunterladen (etwa 2–4 GB). Danach arbeitet alles offline.')
+        self.download_button.clicked.connect(self.download_model)
+        self.download_button.setVisible(not asr_ready())
+        th.addWidget(self.download_button)
         tl.addLayout(th)
         self.stt_status = label('Kleines offenes Modell · vollständig lokale Verarbeitung','muted')
         self.stt_status.setWordWrap(True)
@@ -396,10 +474,13 @@ class Studio(Window):
 
         # Shortcuts live on the body so they keep working when another window embeds it.
         self.body = body
-        for keys, button in [('Ctrl+R', self.record_button), ('Space', self.play_button)]:
+        for keys, action in [('Ctrl+R', self.shortcut_record), ('Space', self.shortcut_play),
+                             ('Left', lambda:self.listen_only(lambda:self.listen.skip(-15))),
+                             ('Right', lambda:self.listen_only(lambda:self.listen.skip(30))),
+                             ('M', lambda:self.listen_only(self.listen.add_bookmark, expert=True))]:
             shortcut = QShortcut(QKeySequence(keys), body)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(lambda button=button:self.shortcut(button))
+            shortcut.activated.connect(action)
 
         self.refresh()
         self.timer = QTimer(self)
@@ -407,11 +488,10 @@ class Studio(Window):
         self.timer.start(80)
         QApplication.instance().installEventFilter(self)
         try:
-            files = sorted(self.folder.glob('*_clean.wav'),key=lambda p:p.stat().st_mtime)
-            if files:
-                raw = Path(str(files[-1]).replace('_clean.wav','_original.wav'))
-                if raw.exists(): self.load_pair(str(files[-1]),str(raw))
+            entries = library.scan(self.folder)
+            if entries: self.load_pair(entries[0]['clean'],entries[0]['original'])
         except Exception: pass
+        self.set_expert(bool(self.preferences.get('expert', False)))
 
     def build_library(self):
         page = QWidget()
@@ -426,6 +506,7 @@ class Studio(Window):
         self.library_list = QListWidget()
         self.library_list.setObjectName('library')
         self.library_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.library_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.library_list.itemClicked.connect(self.open_library_item)
         layout.addWidget(self.library_list,1)
         self.library_count = label('','muted')
@@ -522,7 +603,7 @@ class Studio(Window):
         kind = event.type()
         if kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease) and event.key() == Qt.Key.Key_O \
                 and not event.modifiers() and hasattr(self,'body') and self.body.isVisible() \
-                and self.body.window().isActiveWindow() and self.hold_button.isEnabled():
+                and self.body.window().isActiveWindow() and self.hold_button.isEnabled() and self.hold_button.isVisible():
             typing = isinstance(QApplication.focusWidget(), (QTextEdit, QLineEdit, QAbstractSpinBox))
             if not typing or self.player.original:
                 if not event.isAutoRepeat():
@@ -532,9 +613,99 @@ class Studio(Window):
                 return True
         return super().eventFilter(obj, event)
 
-    def shortcut(self, button):
-        # Only act while the Studio is the visible page and the button would be usable.
-        if self.body.isVisible() and button.isEnabled(): button.click()
+    # --- modes and views --------------------------------------------------
+
+    def set_expert(self, on):
+        self.expert = on
+        self.side_switch.setVisible(on)
+        if on:
+            self.side_pages.setCurrentIndex(self.side_group.checkedId())
+        else:
+            self.side_pages.setCurrentIndex(1)
+            self.refresh_library()
+        self.compare_panel.setVisible(on)
+        self.stream_panel.setVisible(on)
+        self.listen.set_expert(on)
+        if not on:
+            self.player.close()
+            self.set_original(False)
+        self.preferences['expert'] = on
+
+    def show_view(self, index):
+        self.view_group.button(index).setChecked(True)
+        self.views.setCurrentIndex(index)
+        if index == 1:
+            self.player.close()
+        else:
+            self.listen.stop()
+
+    def shortcut_record(self):
+        if self.body.isVisible() and self.record_button.isEnabled():
+            self.show_view(0)
+            self.record_button.click()
+
+    def shortcut_play(self):
+        if not self.body.isVisible(): return
+        if self.views.currentIndex() == 1: self.listen.toggle()
+        elif self.play_button.isVisible() and self.play_button.isEnabled(): self.play_button.click()
+
+    def listen_only(self, action, expert=False):
+        if self.body.isVisible() and self.views.currentIndex() == 1 and (self.expert or not expert):
+            action()
+
+    def asr_context(self):
+        return self.context_edit.text().strip() if self.expert else ''
+
+    def asr_source(self):
+        return self.text_source.currentData() if self.expert else 'board'
+
+    def simple_input(self):
+        """Simple mode: the ReSpeaker if connected, otherwise the system's default microphone."""
+        import sounddevice as sd
+        for index,name,*_ in self.rows:
+            if 'respeaker' in name.lower(): return index,name
+        default = sd.default.device[0]
+        for index,name,*_ in self.rows:
+            if index == default: return index,name
+        return (self.rows[0][0],self.rows[0][1]) if self.rows else (None,None)
+
+    def update_device_card(self):
+        index,name = self.simple_input()
+        if name is None:
+            self.device_label.setText('Kein Mikrofon gefunden')
+            self.device_note.setText('Mikrofon anschließen und „Aktualisieren“ wählen.')
+        elif 'respeaker' in name.lower():
+            self.device_label.setText('●  ReSpeaker Lite verbunden')
+            self.device_note.setText('Automatischer Pegel · bereit für Vorlesungen')
+        else:
+            self.device_label.setText('○  Kein ReSpeaker')
+            self.device_note.setText(f'Aufnahme über „{name}“ mit automatischem Pegel. Für Vorlesungen den ReSpeaker anschließen.')
+        repolish(self.device_label,'ok',bool(name and 'respeaker' in name.lower()))
+
+    def download_model(self):
+        if self.download_process: return
+        self.download_process = QProcess(self)
+        self.download_process.finished.connect(self.download_finished)
+        self.download_process.start(sys.executable,['-u',str(ROOT/'src/download_model.py')])
+        self.download_button.setEnabled(False)
+        self.stt_status.setText('Sprachmodell wird geladen … das passiert nur einmal.')
+
+    def download_finished(self, code, status):
+        error = bytes(self.download_process.readAllStandardError()).decode('utf-8','replace')
+        self.download_process.deleteLater()
+        self.download_process = None
+        ready = asr_ready()
+        self.download_button.setVisible(not ready)
+        self.download_button.setEnabled(True)
+        self.stt_status.setText('Sprachmodell bereit · alles läuft offline.' if ready else 'Download fehlgeschlagen: '+error[-200:])
+        self.transcribe_button.setEnabled(ready and self.last is not None)
+
+    def save_preferences(self):
+        super().save_preferences()
+        self.preferences['expert'] = self.expert
+        for name,box in self.auto_boxes.items():
+            self.preferences.setdefault('inputs',{}).setdefault(name,{})['auto_gain'] = box.isChecked()
+        self.config_path.write_text(json.dumps(self.preferences, ensure_ascii=False, indent=2))
 
     def update_word_count(self):
         words = len(self.transcript.toPlainText().split())
@@ -555,12 +726,14 @@ class Studio(Window):
             item = self.sources_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         self.rows = []
+        self.auto_boxes = {}
         try:
             devices = input_devices()
             has_respeaker = any('respeaker' in info['name'].lower() for _, info in devices)
             virtual = lambda name: any(word in name.lower() for word in VIRTUAL)
             devices = sorted(devices, key=lambda d: (0 if 'respeaker' in d[1]['name'].lower() else 2 if virtual(d[1]['name']) else 1))
             more = QWidget()
+            more.setObjectName('clear')
             more_layout = QVBoxLayout(more)
             more_layout.setContentsMargins(0,0,0,0)
             more_layout.setSpacing(6)
@@ -578,7 +751,7 @@ class Studio(Window):
                 top.addWidget(active,1)
                 button = QPushButton('⋯')
                 button.setObjectName('icon')
-                button.setToolTip('Kanal, Gain und Delay')
+                button.setToolTip('Auto-Pegel, Kanal, Gain und Delay')
                 top.addWidget(button)
                 box.addLayout(top)
                 device_note = label(f'{info["default_samplerate"]/1000:g} kHz · {info["max_input_channels"]} Kanal','micMeta')
@@ -589,13 +762,21 @@ class Studio(Window):
                 meter.setTextVisible(False)
                 box.addWidget(meter)
                 advanced = QWidget()
+                advanced.setObjectName('clear')
                 grid = QGridLayout(advanced)
                 grid.setContentsMargins(0,4,0,0)
                 grid.setVerticalSpacing(4)
                 channel = QSpinBox(); channel.setRange(1,info['max_input_channels']); channel.setValue(prefs.get('channel',1))
                 gain = QDoubleSpinBox(); gain.setRange(-24,24); gain.setValue(prefs.get('gain_db',0)); gain.setDecimals(1)
                 delay = QSpinBox(); delay.setRange(0,250); delay.setValue(prefs.get('delay_ms',0))
-                for r,(text,spin) in enumerate([('Kanal',channel),('Gain · dB',gain),('Delay · ms',delay)]):
+                auto = QCheckBox('Auto-Pegel')
+                auto.setToolTip('Passt die Eingangsverstärkung laufend an: leise, entfernte Sprecher werden angehoben, Pausen nicht.')
+                auto.setChecked(prefs.get('auto_gain', True))
+                gain.setEnabled(not auto.isChecked())
+                auto.toggled.connect(lambda on,g=gain:g.setEnabled(not on))
+                self.auto_boxes[name] = auto
+                grid.addWidget(auto,0,0,1,2)
+                for r,(text,spin) in enumerate([('Kanal',channel),('Gain · dB',gain),('Delay · ms',delay)],1):
                     grid.addWidget(label(text,'muted'),r,0); grid.addWidget(spin,r,1)
                 box.addWidget(advanced)
                 advanced.hide()
@@ -618,24 +799,55 @@ class Studio(Window):
             else:
                 more.deleteLater()
         except Exception as e: self.status.setText(f'Mikrofone: {e}')
+        self.update_device_card()
 
-    def load_pair(self, clean, original):
-        super().load_pair(clean,original)
-        self.waveform.clean = envelope(self.player.clean)
-        self.waveform.raw = envelope(self.player.raw)
-        self.waveform.duration = len(self.player.clean)/self.player.rate
+    def load_pair(self, clean, original=None):
+        self.player.close()
+        self.player_loaded = None
+        self.set_original(False)
+        self.last = {'clean': str(clean), 'original': original}
+        duration = library.duration_of(clean)
+        self.waveform.clean = lecture.envelope_file(clean)
+        self.waveform.raw = lecture.envelope_file(original or lecture.board_source(clean))
+        self.waveform.duration = duration
         self.waveform.live = False
-        name = Path(clean).name.replace('LocalVoice_','').replace('_clean.wav','')
+        self.waveform.processed_title = 'VERBESSERT'
+        self.seek.setRange(0,int(duration*1000))
+        name = lecture.stem_of(clean).replace('LocalVoice_','')
         self.file_label.setText(name[:16].replace('_',' ')+'  ·')
-        self.file_label.setToolTip(clean)
-        self.timer_label.setText(self.format_time(self.waveform.duration,tenths=True))
-        self.enhance_button.setEnabled(self.enhance_process is None)
+        self.file_label.setToolTip(str(clean))
+        self.timer_label.setText(self.format_time(duration,tenths=True))
+        busy = self.busy()
+        for button in (self.play_button,self.hold_button):
+            button.setEnabled(not self.recorder)
+        self.transcribe_button.setEnabled(self.voxtral is None and asr_ready())
+        self.enhance_button.setEnabled(self.enhance_process is None and not busy)
         text_path = Path(clean).with_suffix('.txt')
-        if text_path.exists(): self.transcript.setPlainText(text_path.read_text())
+        self.transcript.setPlainText(text_path.read_text(encoding='utf-8') if text_path.exists() else '')
+        self.listen.load(clean, library.title_of(clean))
+        self.listen_button.show()
         if hasattr(self,'library_list'): QTimer.singleShot(0,self.refresh_library)
 
-    def reprocess(self):
-        if not self.last or self.recorder or self.enhance_process or self.voxtral: return
+    def play_toggle(self):
+        if self.last and self.player_loaded != self.last['clean']:
+            try:
+                delay = json.loads(lecture.metadata_path(self.last['clean']).read_text()).get('model_delay_samples',480)
+            except (OSError,ValueError):
+                delay = 480
+            try:
+                self.status.setText('Vergleich wird vorbereitet …')
+                QApplication.processEvents()
+                self.player.load(self.last['clean'],self.last['original'],delay_samples=delay)
+                self.player_loaded = self.last['clean']
+                self.status.setText('Vergleich bereit · „O“ halten für das Original.')
+            except Exception as e:
+                self.status.setText(f'Wiedergabe: {e}')
+                return
+        super().play_toggle()
+
+    def reprocess(self, source=None, stem=None):
+        if not (self.last or source) or self.recorder or self.enhance_process or self.voxtral: return
+        source = source or self.last['original'] or str(lecture.board_source(self.last['clean']))
         self.enhance_stdout = ''
         self.enhance_stderr = ''
         self.enhance_process = QProcess(self)
@@ -643,14 +855,14 @@ class Studio(Window):
         self.enhance_process.readyReadStandardError.connect(self.enhance_read)
         self.enhance_process.finished.connect(self.enhance_finished)
         self.enhance_process.start(sys.executable,['-u',str(ROOT/'src/enhance_recording.py'),
-            self.last['original'],'--destination',str(self.folder),
-            '--attenuation',str(self.strength.currentData())])
+            source,'--destination',str(self.folder),
+            '--attenuation',str(self.strength.currentData())]+(['--stem',stem] if stem else []))
         self.enhance_button.setEnabled(False)
         self.enhance_button.setText('Verbessert …')
         self.record_button.setEnabled(False)
         self.transcribe_button.setEnabled(False)
         self.open_pair.setEnabled(False)
-        self.status.setText('Originalspur wird mit „'+self.strength.currentText()+'“ neu verbessert …')
+        self.status.setText('Hörspur wird erstellt …' if stem else 'Neue Version mit „'+self.strength.currentText()+'“ wird erstellt …')
 
     def enhance_read(self):
         if self.enhance_process:
@@ -666,9 +878,9 @@ class Studio(Window):
             self.status.setText('Nachbearbeitung: '+(self.enhance_stderr[-300:] or 'Prozess beendet.'))
         else:
             try:
-                result = json.loads(self.enhance_stdout)
-                self.load_pair(result['clean'],result['original'])
-                self.status.setText('Neue Version gespeichert. Original und vorherige Versionen bleiben erhalten.')
+                result = json.loads(self.enhance_stdout.strip().splitlines()[-1])
+                self.load_pair(result['clean'],None)
+                self.status.setText('Hörspur fertig. Original und vorherige Versionen bleiben erhalten.')
             except (ValueError,KeyError,OSError) as e:
                 self.status.setText('Neue Version konnte nicht geladen werden: '+str(e))
         self.enhance_button.setText('Neu verbessern')
@@ -692,14 +904,17 @@ class Studio(Window):
         super().stt_finished(code,status)
         self.enhance_button.setEnabled(self.last is not None and self.enhance_process is None)
         self.open_pair.setEnabled(True)
+        if code == 0:
+            self.listen.reload_transcript()
+            self.refresh_library()
+            self.stt_status.setText('Transkript fertig · „Nachhören“ zeigt es synchron zum Audio.')
 
     def open_recording(self):
         from PySide6.QtWidgets import QFileDialog
-        path,_ = QFileDialog.getOpenFileName(self,'LocalVoice-Aufnahme öffnen',str(self.folder),'Verbesserte Aufnahme (*_clean.wav)')
+        path,_ = QFileDialog.getOpenFileName(self,'LocalVoice-Aufnahme öffnen',str(self.folder),'Hörspur (*_clean.flac *_clean.wav)')
         if path:
-            raw = path.replace('_clean.wav','_original.wav')
-            if Path(raw).exists(): self.load_pair(path,raw)
-            else: self.status.setText('Die zugehörige Originalspur fehlt in diesem Ordner.')
+            raw = Path(path).with_name(lecture.stem_of(path)+'_original.wav')
+            self.load_pair(path,str(raw) if raw.exists() else None)
 
     def choose_folder(self):
         super().choose_folder()
@@ -721,9 +936,12 @@ class Studio(Window):
         self.set_badge('AUFNAHME' if self.recorder else 'BEREIT')
         repolish(self.record_button,'recording',self.recorder is not None)
         self.cancel_transcribe.setVisible(self.voxtral is not None)
+        self.level_hint.setVisible(self.recorder is not None)
         if self.recorder:
             state = self.recorder.state
             self.waveform.live = True
+            if state['status'] == 'recording':
+                self.update_level_hint(state)
             if state['status'] == 'recording':
                 name = self.recorder.specs[state['active']].name.replace('Microphone','Mikrofon')
                 self.status.setText(f'{name} · Sprache wird lokal verbessert')
@@ -746,7 +964,23 @@ class Studio(Window):
                 elif data['state'] == 'error': self.stt_status.setText('Modell-Download: '+data['message'][:150])
             except (OSError,ValueError,KeyError): pass
 
+    def update_level_hint(self, state):
+        import math
+        level = max(state.get('levels') or [0])
+        db = 20*math.log10(max(level,1e-9))
+        self.level_db = .9*getattr(self,'level_db',db)+.1*db
+        gain = state.get('auto_gain_db',0.)
+        if db > -3:
+            text, kind = 'Pegel: zu laut – etwas weiter weg', 'bad'
+        elif self.level_db < -55 and gain > 17:
+            text, kind = 'Pegel: sehr leise – näher an die Sprecher', 'warn'
+        else:
+            text, kind = 'Pegel: gut', 'good'
+        self.level_hint.setText(text+(f' · Auto {gain:+.0f} dB' if self.expert else ''))
+        repolish(self.level_hint,'kind',kind)
+
     def closeEvent(self,event):
+        self.listen.stop()
         if self.enhance_process:
             self.status.setText('Die neue Version wird noch gespeichert. Danach schließen.')
             event.ignore()
@@ -832,6 +1066,21 @@ QTabBar::tab:hover:!selected {color:#cdd7e6;}
 QTabBar::tab:disabled {color:#4d5a6e;}
 QGroupBox {background:#141c28; border:1px solid #212c3d; border-radius:12px; margin-top:22px; padding:14px 12px 10px; font-weight:650;}
 QGroupBox::title {subcontrol-origin:margin; left:4px; top:2px; padding:0 4px; color:#7f8ea8;}
+QWidget#clear {background:transparent;}
+QFrame#deviceCard {background:#141c28; border:1px solid #212c3d; border-radius:12px;}
+QFrame#deviceCard QLabel {background:transparent;}
+QLabel#deviceTitle {font-weight:650; font-size:12px; color:#f5c26b;}
+QLabel#deviceTitle[ok="true"] {color:#6ee7d3;}
+QLabel#levelHint {font-size:11px; font-weight:600; color:#6ee7d3;}
+QLabel#levelHint[kind="warn"] {color:#f5c26b;}
+QLabel#levelHint[kind="bad"] {color:#ff6370;}
+QPushButton#playRound {background:#6ee7d3; color:#062a25; border:0; border-radius:19px; min-width:38px; max-width:38px; min-height:38px; max-height:38px; padding:0; font-size:14px; font-weight:700;}
+QPushButton#playRound:hover {background:#98f0e2;}
+QPushButton#playRound:disabled {background:#1f3b39; color:#5e8580;}
+QTextEdit#reader {background:transparent; border:0; padding:4px 2px; font-size:15px;}
+QListWidget#marks {background:#0f1620; border:1px solid #212c3d; border-radius:9px; outline:0;}
+QListWidget#marks::item {padding:6px 8px; border-radius:6px;}
+QListWidget#marks::item:selected {background:#2f5f6f;}
 QFrame#segment {background:#141c28; border:1px solid #212c3d; border-radius:10px;}
 QPushButton#segmentButton {background:transparent; border:0; border-radius:7px; padding:6px 0; color:#8d9bb2; font-weight:600;}
 QPushButton#segmentButton:checked {background:#253246; color:#e8eef7;}

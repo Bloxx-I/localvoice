@@ -311,11 +311,21 @@ class Window(QMainWindow):
         self.voxtral.finished.connect(self.stt_finished)
         self.voxtral.errorOccurred.connect(lambda e: self.stt_status.setText(f'Transkription konnte nicht starten: {e}'))
         self.voxtral.start(sys.executable, ['-u', str(ROOT/'src/transcribe.py'), self.last['clean'],
-            '--language', self.language.currentData(), '--model', str(ROOT/'models/qwen3-asr')])
+            '--language', self.language.currentData(), '--model', str(ROOT/'models/qwen3-asr'),
+            '--context', self.asr_context(), '--source', self.asr_source()])
         self.transcribe_button.setEnabled(False)
         self.record_button.setEnabled(False)
         self.cancel_transcribe.setEnabled(True)
         self.stt_status.setText('Qwen3-ASR wird lokal geladen …')
+
+    def asr_context(self):
+        return ''
+
+    def asr_source(self):
+        return 'board'
+
+    def stt_progress(self, event):
+        pass
 
     def stt_output(self):
         self.voxtral_buffer += bytes(self.voxtral.readAllStandardOutput()).decode('utf-8', errors='replace')
@@ -324,6 +334,7 @@ class Window(QMainWindow):
             try:
                 event = json.loads(line)
                 if event.get('status'): self.stt_status.setText(event['status'])
+                self.stt_progress(event)
                 if event.get('text') is not None: self.transcript.setPlainText(event['text'])
             except ValueError:
                 pass
@@ -367,9 +378,9 @@ class Window(QMainWindow):
                 self.record_button.setText('●  Aufnahme starten')
                 if rec.error:
                     self.status.setText('Aufnahme: ' + rec.error)
-                elif rec.result:
-                    self.load_pair(rec.result['clean'], rec.result['original'])
-                    self.status.setText(f'Gespeichert · {rec.result["duration_seconds"]:.1f} s · Clean + Original · 48 kHz WAV')
+                elif rec.result and rec.result.get('clean'):
+                    self.load_pair(rec.result['clean'], None)
+                    self.status.setText(f'Gespeichert · {rec.result["duration_seconds"]:.1f} s')
                     if self.auto_transcribe.isChecked() and not getattr(self,'managed_pipeline',False): self.transcribe()
         self.play_button.setText('Ⅱ  Pause' if self.player.playing else '▶  Abspielen')
         if not self.seek.isSliderDown(): self.seek.setValue(int(self.player.position/self.player.rate*1000))

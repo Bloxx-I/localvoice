@@ -22,18 +22,24 @@ class ComparisonPlayer:
         self.device = None
 
     @staticmethod
-    def read(path):
-        with wave.open(str(path), 'rb') as w:
-            if w.getnchannels() != 1 or w.getsampwidth() not in (2, 4):
-                raise ValueError('Vergleich benötigt Mono-PCM16/PCM32-Dateien.')
-            return np.frombuffer(w.readframes(w.getnframes()), dtype='<i2' if w.getsampwidth()==2 else '<i4').astype(np.float32)/(32768 if w.getsampwidth()==2 else 2147483648), w.getframerate()
+    def read(path, rate=None):
+        import lecture
+        import soundfile as sf
+        native = sf.info(str(path)).samplerate
+        return lecture.read_mono(path, rate or native), rate or native
 
-    def load(self, clean, raw, delay_samples=480):
+    def load(self, clean, raw=None, delay_samples=480):
+        """raw=None: the original is derived from the board recording behind clean."""
+        import lecture
         self.close()
         self.clean, self.rate = self.read(clean)
-        self.raw, rate = self.read(raw)
-        if rate != self.rate:
-            raise ValueError('Die Vergleichsspuren haben unterschiedliche Abtastraten.')
+        derived = raw is None
+        if derived:
+            raw = lecture.board_source(clean)
+        self.raw, rate = self.read(raw, self.rate)
+        if derived:
+            # Same automatic level as the listening track, so A/B compares sound, not loudness.
+            self.raw = lecture.prepare_text_track(self.raw, self.rate)
         # Match the causal STFT delay in this low-lookahead model (960 FFT,
         # 480 hop, no network lookahead). Verify this in the signal test.
         self.raw = np.pad(self.raw, (delay_samples, 0))[:len(self.clean)]

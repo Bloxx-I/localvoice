@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QPushButton, QTextEd
 from app import Studio
 from app_core import ROOT
 from engine import InputSpec, Recorder
+from paths import asr_ready
 
 
 class IntegratedStudio(Studio):
@@ -27,6 +28,7 @@ class IntegratedStudio(Studio):
         self.monitor_device = None
         self.monitor_volume = .35
         self.native_paths = []
+        self.pipeline_used = None
         super().__init__()
         self.pipeline_mode = QComboBox()
         self.pipeline_mode.addItem('Live verbessern + fortlaufender Text', 'live')
@@ -83,19 +85,27 @@ class IntegratedStudio(Studio):
         if self.live_stt:
             self.stream_status.setText('Live-Text arbeitet noch. Bitte bis zum Abschluss warten.')
             return
-        specs = [InputSpec(index, name, channel.value()-1, gain.value(), delay.value())
-                 for index,name,active,channel,gain,delay,_ in self.rows if active.isChecked()]
+        if self.expert:
+            specs = [InputSpec(index, name, channel.value()-1, gain.value(), delay.value(),
+                               auto_gain=self.auto_boxes[name].isChecked() if name in self.auto_boxes else True)
+                     for index,name,active,channel,gain,delay,_ in self.rows if active.isChecked()]
+        else:
+            index, name = self.simple_input()
+            specs = [InputSpec(index, name)] if name is not None else []
         if not specs:
-            self.status.setText('Bitte mindestens ein Mikrofon aktivieren.')
+            self.status.setText('Bitte mindestens ein Mikrofon aktivieren.' if self.expert else 'Kein Mikrofon gefunden. Bitte anschließen.')
             return
+        self.show_view(0)
+        self.listen.stop()
         self.player.close()
         self.transcript.clear()
-        self.stream_status.setText('Native Aufnahme läuft; zusätzliche Verarbeitung nach Stopp.' if self.pipeline_mode.currentData()=='deferred' else 'Live-Verarbeitung wird vorbereitet …')
+        pipeline = self.pipeline_mode.currentData() if self.expert else 'deferred'
+        self.pipeline_used = pipeline
+        self.stream_status.setText('Native Aufnahme läuft; Verarbeitung nach Stopp.' if pipeline=='deferred' else 'Live-Verarbeitung wird vorbereitet …')
         self.save_preferences()
-        pipeline = self.pipeline_mode.currentData()
         self.recorder = Recorder(specs, self.folder, self.strength.currentData(), self.mode.currentData(),
             save_raw=True, wet=self.wet, pipeline=pipeline,
-            monitor=self.live_monitor.isChecked(), monitor_device=self.monitor_device,
+            monitor=self.live_monitor.isChecked() and self.expert, monitor_device=self.monitor_device,
             monitor_volume=self.monitor_volume, segment_seconds=self.chunk_size.currentData())
         self.live_rec = self.recorder if pipeline == 'live' else None
         self.deferred_pending = pipeline == 'deferred'
@@ -103,7 +113,7 @@ class IntegratedStudio(Studio):
         self.recorder.start()
         self.set_record_controls(False)
         self.record_button.setText('■  Aufnahme stoppen')
-        self.status.setText('Native Aufnahme und lokale Verarbeitung werden vorbereitet …')
+        self.status.setText('Aufnahme startet …')
         self.pipeline_mode.setEnabled(False)
         self.chunk_size.setEnabled(False)
         self.live_monitor.setEnabled(False)
@@ -112,7 +122,7 @@ class IntegratedStudio(Studio):
             self.start_live_text()
 
     def start_live_text(self):
-        if not (ROOT/'models/qwen3-asr/.ready.json').exists():
+        if not asr_ready():
             self.stream_status.setText('Live-Text: lokales Modell fehlt. Audioaufnahme läuft weiter.')
             return
         self.transcript.clear()
@@ -129,7 +139,8 @@ class IntegratedStudio(Studio):
         self.live_stt.finished.connect(self.live_text_finished)
         self.live_stt.errorOccurred.connect(self.live_text_error)
         self.live_stt.start(sys.executable, ['-u', str(ROOT/'src/stream_transcribe.py'),
-            '--model', str(ROOT/'models/qwen3-asr'), '--language', self.language.currentData()])
+            '--model', str(ROOT/'models/qwen3-asr'), '--language', self.language.currentData(),
+            '--context', self.asr_context()])
         self.stream_status.setText('Live-Text: Modell wird einmal für diese Aufnahme geladen …')
         self.transcribe_button.setEnabled(False)
 
@@ -225,7 +236,8 @@ class IntegratedStudio(Studio):
         self.send_segments()
         self.stop_live_text_button.setVisible(self.live_stt is not None)
         if self.recorder and self.recorder.pipeline == 'deferred':
-            self.status.setText('Native Aufnahme läuft · Klangverbesserung und Text folgen nach Stopp.')
+            if self.recorder.state['status'] == 'recording':
+                self.status.setText('Aufnahme läuft · Hörspur und Text entstehen nach dem Stopp.')
             self.waveform.processed_title = 'NACH STOPP'
             self.waveform.clean[:] = 0
         elif self.recorder:
@@ -237,11 +249,12 @@ class IntegratedStudio(Studio):
         if finished:
             if previous.result:
                 self.native_paths = [entry['file'] for entry in previous.result['native_inputs']]
-                native = previous.result['native_inputs'][0]
-                self.status.setText(f"Native Quelle: {native['sample_rate']:g} Hz · {native['channels']} Kanal/Kanäle · PCM32. Vergleich/zusätzliche KI: 48 kHz.")
+                minutes = previous.result['duration_seconds']/60
+                self.status.setText(f'Gespeichert · {minutes:.1f} min. Hörspur wird erstellt …' if self.deferred_pending
+                                    else f'Gespeichert · {minutes:.1f} min.')
                 if self.deferred_pending and not previous.error:
                     self.deferred_pending = False
-                    self.reprocess()
+                    self.reprocess(source=previous.result['source'], stem=Path(previous.result['metadata']).stem)
             if previous.error:
                 self.deferred_pending = False
         if self.live_stt:
@@ -251,17 +264,14 @@ class IntegratedStudio(Studio):
             self.open_pair.setEnabled(False)
         self.release_pipeline_controls()
 
-    def load_pair(self, clean, original):
-        super().load_pair(clean, original)
-        self.waveform.processed_title = 'VERBESSERT' if clean != original else 'NACH STOPP'
-        if clean == original:
-            self.waveform.clean[:] = 0
-            self.source_label.setText('Original · noch nicht verbessert')
-
     def enhance_finished(self, code, status):
         super().enhance_finished(code, status)
-        if code == 0 and self.pipeline_mode.currentData() == 'deferred' and self.auto_transcribe.isChecked():
+        transcribe = self.auto_transcribe.isChecked() or not self.expert
+        if code == 0 and self.pipeline_used == 'deferred' and transcribe and asr_ready():
+            self.pipeline_used = None
             self.transcribe()
+        elif code == 0 and self.pipeline_used == 'deferred' and not asr_ready():
+            self.stt_status.setText('Für den Text einmalig das Sprachmodell laden.')
         self.release_pipeline_controls()
 
     def stt_finished(self, code, status):

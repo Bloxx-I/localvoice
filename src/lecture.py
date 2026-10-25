@@ -230,3 +230,21 @@ def read_mono(path, rate=ASR_RATE, channel=0):
         if resampler:
             parts.append(resampler.resample_chunk(np.empty(0, np.float32), last=True))
     return np.concatenate(parts) if parts else np.empty(0, np.float32)
+
+
+def envelope_file(path, bins=650, channel=0):
+    """Peak envelope of a whole file without loading it into memory."""
+    import soundfile as sf
+    out = np.zeros(bins)
+    try:
+        with sf.SoundFile(str(path)) as f:
+            total = max(1, f.frames)
+            position = 0
+            for block in f.blocks(blocksize=1 << 16, dtype='float32', always_2d=True):
+                x = np.abs(block[:, min(channel, block.shape[1]-1)])
+                index = ((position+np.arange(len(x)))*bins//total).clip(0, bins-1)
+                np.maximum.at(out, index, x)
+                position += len(x)
+    except Exception:
+        pass
+    return out

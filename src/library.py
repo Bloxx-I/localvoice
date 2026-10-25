@@ -49,6 +49,18 @@ def scan(folder):
     return sorted(entries, key=lambda e: e['created'], reverse=True)
 
 
+def title_of(clean):
+    """'25.10.2026 · 22:27' for LocalVoice names, else the plain stem."""
+    stem = lecture.stem_of(clean).removeprefix('LocalVoice_')
+    match = STAMP.match(stem)
+    try:
+        when = datetime.strptime(' '.join(match.groups()[:2]), '%Y-%m-%d %H-%M-%S')
+        variant = match.group(3).replace('_', ' ')
+        return when.strftime('%d.%m.%Y · %H:%M') + (f' · {variant}' if variant else '')
+    except (AttributeError, ValueError):
+        return stem.replace('_', ' ')
+
+
 def cues(clean, text='', duration=0.):
     """Timed text blocks for subtitles. Segment times, not word timestamps."""
     clean = Path(clean)
