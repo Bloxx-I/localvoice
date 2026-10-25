@@ -1,6 +1,7 @@
 """Compact native recording studio. Audio business logic lives in app_core."""
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -442,12 +443,14 @@ class Studio(Window):
         tl.setSpacing(8)
         th = QHBoxLayout()
         th.addWidget(label('Transkript','section'))
-        th.addWidget(label('QWEN3-ASR','eyebrow'))
+        self.engine_tag = label('','engineTag')
+        th.addWidget(self.engine_tag)
         th.addStretch()
         self.language = QComboBox()
         for name,code in [('Deutsch','de'),('English','en'),('Français','fr'),('Español','es')]: self.language.addItem(name,code)
         th.addWidget(self.language)
-        self.transcribe_button = QPushButton('Transkribieren')
+        self.transcribe_button = QPushButton('Lokal transkribieren')
+        self.transcribe_button.setToolTip('Auf diesem Rechner, ohne Internet. Auf Laptops ohne Grafikkarte langsamer als der Server.')
         self.transcribe_button.clicked.connect(self.transcribe)
         self.transcribe_button.setEnabled(False)
         th.addWidget(self.transcribe_button)
@@ -468,9 +471,15 @@ class Studio(Window):
         self.download_button.setVisible(not asr_ready())
         th.addWidget(self.download_button)
         tl.addLayout(th)
-        self.stt_status = label('Kleines offenes Modell · vollständig lokale Verarbeitung','muted')
+        self.stt_status = label('Kleines offenes Modell · vollständig lokale Verarbeitung','sttStatus')
         self.stt_status.setWordWrap(True)
         tl.addWidget(self.stt_status)
+        self.stt_bar = QProgressBar()
+        self.stt_bar.setObjectName('thin')
+        self.stt_bar.setRange(0,1000)
+        self.stt_bar.setTextVisible(False)
+        self.stt_bar.hide()
+        tl.addWidget(self.stt_bar)
         self.transcript = QTextEdit()
         self.transcript.setPlaceholderText('Aus deiner Aufnahme wird hier Text. Das Transkript wird zusätzlich im Aufnahmeordner gespeichert.')
         self.transcript.setMinimumHeight(90)
@@ -743,6 +752,43 @@ class Studio(Window):
                 '--token', self.server_token.text().strip(), '--language', self.language.currentData(),
                 '--context', self.asr_context()]
 
+    def set_engine(self, server, running=False):
+        if server is None:
+            self.engine_tag.setText('')
+            return
+        self.engine_tag.setText(('● ' if running else '')+('SERVER r9700' if server else 'LOKAL · DIESER RECHNER'))
+        repolish(self.engine_tag,'server',bool(server))
+
+    def show_transcript_source(self, clean):
+        try:
+            meta = json.loads(lecture.transcript_path(clean).read_text(encoding='utf-8'))
+            server = meta.get('backend') == 'server'
+            self.set_engine(server)
+            when = time.strftime('%d.%m. %H:%M', time.localtime(lecture.transcript_path(clean).stat().st_mtime))
+            self.stt_status.setText(f"Text von {'deinem Server' if server else 'diesem Rechner'} · {meta.get('model','Qwen3-ASR')} · {when}")
+        except (OSError,ValueError):
+            self.set_engine(None)
+            self.stt_status.setText('Noch kein Transkript.' if not self.transcript.toPlainText() else 'Transkript (älteres Format).')
+        repolish(self.stt_status,'kind','')
+
+    def stt_progress(self, event):
+        if 'progress' in event:
+            self.stt_bar.setValue(int(1000*event['progress']))
+        if event.get('status'):
+            self.listen.hint.setText(('Server: ' if self.use_server and not event['status'].startswith('Server') else '')+event['status'])
+
+    def transcribe(self):
+        backup = self.transcript.toPlainText()
+        super().transcribe()
+        if self.voxtral:
+            self.transcript_backup = backup
+            self.set_engine(self.use_server, running=True)
+            self.stt_bar.setValue(0)
+            self.stt_bar.show()
+            repolish(self.stt_status,'kind','')
+            self.enhance_button.setEnabled(False)
+            self.open_pair.setEnabled(False)
+
     def transcribe_on_server(self):
         if not self.last or self.voxtral or not self.server_ready():
             return
@@ -899,6 +945,8 @@ class Studio(Window):
         self.enhance_button.setEnabled(self.enhance_process is None and not busy)
         text_path = Path(clean).with_suffix('.txt')
         self.transcript.setPlainText(text_path.read_text(encoding='utf-8') if text_path.exists() else '')
+        if self.voxtral is None:
+            self.show_transcript_source(clean)
         self.listen.load(clean, library.title_of(clean))
         self.listen_button.show()
         if hasattr(self,'library_list'): QTimer.singleShot(0,self.refresh_library)
@@ -970,20 +1018,26 @@ class Studio(Window):
         self.enhance_button.setEnabled(enabled and self.last is not None and self.enhance_process is None)
         self.open_pair.setEnabled(enabled)
 
-    def transcribe(self):
-        super().transcribe()
-        if self.voxtral:
-            self.enhance_button.setEnabled(False)
-            self.open_pair.setEnabled(False)
-
     def stt_finished(self,code,status):
         server = self.use_server
         self.use_server = False
         super().stt_finished(code,status)
+        self.stt_bar.hide()
+        self.listen.hint.setText('Klick auf einen Absatz springt im Audio genau dorthin.')
+        if code:
+            # Keep the error visible and bring the previous text back.
+            error = (self.voxtral_error.strip().splitlines() or ['Abgebrochen.'])[-1][:300]
+            self.stt_status.setText(('Server: ' if server else 'Transkription: ')+error)
+            repolish(self.stt_status,'kind','bad')
+            print(f'[Transkription {"Server" if server else "lokal"}] {self.voxtral_error[-2000:]}', flush=True)
+            if not self.transcript.toPlainText() and getattr(self,'transcript_backup',''):
+                self.transcript.setPlainText(self.transcript_backup)
+            self.set_engine(None)
         self.server_button.setEnabled(self.last is not None)
         self.enhance_button.setEnabled(self.last is not None and self.enhance_process is None)
         self.open_pair.setEnabled(True)
         if code == 0:
+            self.set_engine(server)
             self.listen.reload_transcript()
             self.refresh_library()
             self.stt_status.setText(('Transkript vom Server fertig' if server else 'Transkript fertig')+' · „Nachhören“ zeigt es synchron zum Audio.')
@@ -1033,14 +1087,11 @@ class Studio(Window):
         self.waveform.position = self.player.position/self.player.rate
         self.waveform.update()
         self.play_time.setText(self.format_time(self.waveform.position)+' / '+self.format_time(self.waveform.duration))
-        if self.voxtral is None:
+        if self.download_process is not None:
             try:
                 data = json.loads((ROOT/'models/download-status.json').read_text(encoding='utf-8'))
                 if data['state'] == 'downloading':
-                    self.stt_status.setText(f'Modell-Download · {data.get("percent",0):.1f} % · Audio bleibt lokal')
-                elif data['state'] == 'ready' and not self.transcript.toPlainText():
-                    self.stt_status.setText('Qwen3-ASR bereit · 8 Bit · lokal auf dem M3 Max')
-                elif data['state'] == 'error': self.stt_status.setText('Modell-Download: '+data['message'][:150])
+                    self.stt_status.setText(f'Sprachmodell wird geladen · {data.get("percent",0):.1f} %')
             except (OSError,ValueError,KeyError): pass
 
     def update_level_hint(self, state):
@@ -1172,6 +1223,10 @@ QListWidget#library::item:selected {background:#152a2c; border-color:#2f6f66;}
 QWidget#libraryRow, QWidget#libraryRow QLabel {background:transparent;}
 QLabel#libraryTitle {font-weight:650; font-size:12px;}
 QLabel#libraryText {color:#b7c3d6; font-size:11px;}
+QLabel#engineTag {font-size:9px; font-weight:700; letter-spacing:1px; color:#8fb6d8; background:#18263a; border-radius:8px; padding:3px 8px;}
+QLabel#engineTag[server="true"] {color:#2c1d05; background:#f5c26b;}
+QLabel#sttStatus {color:#8d9bb2; font-size:11px;}
+QLabel#sttStatus[kind="bad"] {color:#ff8a94; font-weight:600;}
 QLabel#libraryTag {color:#6ee7d3; font-size:10px;}
 QMenu {background:#1f2b3c; border:1px solid #33435b; padding:4px; border-radius:8px;}
 QMenu::item {padding:6px 18px; border-radius:5px;}

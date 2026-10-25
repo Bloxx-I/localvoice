@@ -49,7 +49,10 @@ def main():
     parser.add_argument('--check', action='store_true', help='nur Verbindung prüfen')
     args = parser.parse_args()
     server = Server(args.url, args.token)
+    emit(status='Verbindung zum Server …', progress=0.)
     health = server.call('GET', '/v1/health', timeout=15)
+    if not args.check and not health.get('ok'):
+        raise RuntimeError('Server erreichbar, aber das Sprachmodell fehlt dort.')
     if args.check:
         emit(status=f"Server bereit · {health.get('model')}" if health.get('ok') else 'Server erreichbar, Modell fehlt.', health=health)
         return
@@ -66,7 +69,7 @@ def main():
     sf.write(buffer, track, lecture.ASR_RATE, format='FLAC', subtype='PCM_16')
     job = server.call('POST', '/v1/jobs', {'language': args.language, 'context': args.context,
                                            'chunks': [[round(a, 3), round(b, 3)] for a, b in chunks]})['id']
-    emit(status=f'Wird hochgeladen ({buffer.tell()/2**20:.0f} MB) …')
+    emit(status=f'Wird zum Server hochgeladen ({buffer.tell()/2**20:.1f} MB) …', progress=.03)
     server.call('PUT', f'/v1/jobs/{job}/audio', buffer.getvalue(), 'audio/flac', timeout=1800)
     started, shown = time.monotonic(), -1
     try:
@@ -79,11 +82,11 @@ def main():
                 emit(text=lecture.paragraphs(segments), segments=segments)
             progress = status.get('progress', 0.)
             if status['state'] == 'queued':
-                emit(status='Server: wartet auf einen freien Platz …', progress=0.)
+                emit(status='Server: wartet auf einen freien Platz …', progress=.08)
             elif status['state'] == 'running':
                 elapsed = time.monotonic()-started
                 eta = f' · noch etwa {int(elapsed/progress*(1-progress)//60)+1} min' if progress > .05 else ''
-                emit(status=f'Server · {int(100*progress)} %{eta}', progress=progress)
+                emit(status=f'Server transkribiert · {int(100*progress)} %{eta}', progress=.1+.9*progress)
             elif status['state'] == 'error':
                 raise RuntimeError('Server: '+status.get('message', 'Fehler'))
             elif status['state'] == 'done':
