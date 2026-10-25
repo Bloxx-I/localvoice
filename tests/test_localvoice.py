@@ -19,6 +19,7 @@ class AudioTests(unittest.TestCase):
         rng = np.random.default_rng(17)
         x = rng.normal(0, .08, 60*FRAME).astype(np.float32)
         enhancer = Enhancer(1, attenuation=1, quality='live')
+        enhancer.levelers = [None]  # measure the model alone, without automatic gain
         y = np.concatenate([enhancer.process([x[i:i+FRAME]])[0] for i in range(0,len(x),FRAME)])
         enhancer.close()
         c = correlate(y[4800:], x[4800:], method='fft')
@@ -49,6 +50,7 @@ class AudioTests(unittest.TestCase):
     def test_studio_model_delay_matches_original_alignment(self):
         x = np.random.default_rng(23).normal(0,.08,80*FRAME).astype(np.float32)
         enhancer = Enhancer(1,attenuation=1,quality='studio')
+        enhancer.levelers = [None]
         y = np.concatenate([enhancer.process([x[i:i+FRAME]])[0] for i in range(0,len(x),FRAME)])
         c = correlate(y[4800:],x[4800:],method='fft')
         self.assertEqual(int(np.argmax(c)-(len(x[4800:])-1)),enhancer.delay_samples)

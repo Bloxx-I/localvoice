@@ -7,6 +7,7 @@ import threading
 import time
 import wave
 import sys
+import platform
 import importlib.util
 import configparser
 import tarfile
@@ -17,14 +18,45 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 import soxr
-# The package __init__ also imports an unused ONNX runtime with telemetry.
-# Load only the audited native streaming wrapper and its bundled Rust model.
 _package = Path(importlib.util.find_spec('dfnstream_py').origin).parent
-_spec = importlib.util.spec_from_file_location('_localvoice_df', _package / 'dfnstream.py')
-_module = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_module)
-DeepFilterNetStreaming = _module.DeepFilterNetStreaming
+# The native Rust library ships for macOS arm64 and Linux only. Elsewhere (Windows)
+# the package's pure ONNX implementation of the same streaming model is used.
+NATIVE_DF = (sys.platform == 'darwin' and platform.machine() == 'arm64') or sys.platform.startswith('linux')
+if NATIVE_DF:
+    # The package __init__ also imports an unused ONNX runtime with telemetry.
+    # Load only the audited native streaming wrapper and its bundled Rust model.
+    _spec = importlib.util.spec_from_file_location('_localvoice_df', _package / 'dfnstream.py')
+    _module = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_module)
+    DeepFilterNetStreaming = _module.DeepFilterNetStreaming
+else:
+    from dfnstream_py.dfnstream_onnx import DeepFilterNetStreaming as _OnnxStreaming
 
+    class DeepFilterNetStreaming:
+        """ONNX model (512-sample hop) behind the recorder's 480-sample frame interface."""
+        frame_length = 480
+
+        def __init__(self, model_path=None, atten_lim=None, **_):
+            self.model = _OnnxStreaming(atten_lim=atten_lim)
+            self.hop = self.model.frame_length
+            self.inbox = np.empty(0, np.float32)
+            # Prime with one hop of silence so every call can return a full frame.
+            self.outbox = np.zeros(self.hop, np.float32)
+
+        def process_frame(self, frame):
+            self.inbox = np.concatenate((self.inbox, frame))
+            while len(self.inbox) >= self.hop:
+                y = self.model.process_frame(np.ascontiguousarray(self.inbox[:self.hop]))[0]
+                self.inbox = self.inbox[self.hop:]
+                self.outbox = np.concatenate((self.outbox, np.asarray(y, np.float32)))
+            out, self.outbox = self.outbox[:len(frame)], self.outbox[len(frame):]
+            return out, 0.
+
+        def close(self):
+            self.model.close()
+
+import soundfile as sf
+from lecture import Leveler
 from monitor import LiveMonitor
 
 RATE = 48000
@@ -47,6 +79,7 @@ class InputSpec:
     gain_db: float = 0.0
     delay_ms: int = 0
     sample_rate: int | None = None
+    auto_gain: bool = True
 
 
 class Enhancer:
@@ -57,11 +90,15 @@ class Enhancer:
         with tarfile.open(model_path) as archive:
             config.read_string(archive.extractfile(next(n for n in archive.getnames() if n.endswith('config.ini'))).read().decode())
         self.delay_samples = config.getint('df','fft_size') - config.getint('df','hop_size') + config.getint('deepfilternet','conv_lookahead')*FRAME
+        if not NATIVE_DF:
+            # ONNX model behind the 512→480 adapter; measured by cross-correlation.
+            self.delay_samples = 2048
         self.wet = wet
         try:
             for _ in range(count):
                 self.models.append(DeepFilterNetStreaming(
-                    model_path=str(model_path), atten_lim=attenuation, compensate_delay=False, log_level='error'))
+                    model_path=str(model_path) if NATIVE_DF else None, atten_lim=attenuation,
+                    compensate_delay=False, log_level='error'))
         except BaseException:
             self.close()
             raise
@@ -71,6 +108,7 @@ class Enhancer:
         self.mode = mode
         self.specs = specs or [InputSpec(i, str(i)) for i in range(count)]
         self.delays = [np.zeros(s.delay_ms * RATE // 1000, np.float32) for s in self.specs]
+        self.levelers = [Leveler(RATE) if s.auto_gain else None for s in self.specs]
         self.dry_delays = [np.zeros(self.delay_samples,np.float32) for _ in self.specs]
         self.scores = np.full(count, -30.0)
         self.active = 0
@@ -85,6 +123,8 @@ class Enhancer:
             x = np.asarray(frame, dtype=np.float32) * np.float32(10 ** (spec.gain_db / 20))
             self.clip_count += int(np.count_nonzero(np.abs(x) >= 1))
             x = np.clip(x, -1, 1)
+            if self.levelers[i] is not None:
+                x = self.levelers[i].process(x)
             n = len(self.delays[i])
             if n:
                 joined = np.concatenate((self.delays[i], x))
@@ -135,6 +175,7 @@ class Capture:
         self.channels = int(info['max_input_channels'])
         self.native_path = Path(native_path)
         self.native_frames = 0
+        self.channel_difference = 0
         self.queue = queue.Queue(maxsize=200)
         self.pending = np.empty(0, np.float32)
         self.resampler = None if self.rate == RATE else soxr.ResampleStream(self.rate, RATE, 1, dtype='float32', quality='HQ')
@@ -165,6 +206,9 @@ class Capture:
         if x.ndim == 2:
             self.native.writeframesraw(x.astype('<i4', copy=False).tobytes())
             self.native_frames += len(x)
+            if x.shape[1] > 1 and len(x):
+                spread = np.max(x, axis=1).astype(np.int64) - np.min(x, axis=1)
+                self.channel_difference = max(self.channel_difference, int(spread.max()))
             x = x[:, self.spec.channel].astype(np.float32) / 2147483648.0
         if self.resampler is not None:
             x = self.resampler.resample_chunk(x, last=last)
@@ -190,6 +234,22 @@ class Capture:
         if self.native:
             self.native.close()
             self.native = None
+
+    def collapse_identical_channels(self, tolerance=16):
+        """The ReSpeaker Lite USB firmware copies one signal to both channels. Keep it once.
+
+        Only when every sample matched within a few 32-bit steps (~ -180 dBFS).
+        """
+        if self.channels < 2 or self.channel_difference > tolerance or not self.native_frames:
+            return False
+        mono = self.native_path.with_suffix('.mono.tmp')
+        with sf.SoundFile(str(self.native_path)) as src, sf.SoundFile(str(mono), 'w', samplerate=src.samplerate,
+                channels=1, subtype='PCM_32', format='WAV') as dst:
+            for block in src.blocks(blocksize=1 << 16, dtype='int32', always_2d=True):
+                dst.write(np.ascontiguousarray(block[:, :1]))
+        mono.replace(self.native_path)
+        self.channels = 1
+        return True
 
 
 class Recorder:
@@ -225,8 +285,7 @@ class Recorder:
             self.state['status'] = 'loading'
             self.folder.mkdir(parents=True, exist_ok=True)
             stem = 'LocalVoice_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
-            target = self.folder / (stem + '_clean.wav')
-            raw_target = self.folder / (stem + '_original.wav')
+            target = self.folder / (stem + '_clean.flac')
             metadata_target = self.folder / (stem + '.json')
             if self.pipeline == 'live':
                 enhancer = Enhancer(len(self.specs), self.attenuation, self.mode, self.specs, wet=self.wet)
@@ -234,10 +293,10 @@ class Recorder:
                 captures.append(Capture(spec, self.folder / f'{stem}_input{i+1}_native.wav'))
             for capture in captures:
                 capture.stream.start()
-            for path in ([target, raw_target] if enhancer else [raw_target]):
-                writer = wave.open(str(path), 'wb')
-                writer.setparams((1, 4, RATE, 0, 'NONE', 'not compressed'))
-                writers.append(writer)
+            if enhancer:
+                writers.append(sf.SoundFile(str(target), 'w', samplerate=RATE, channels=1,
+                                            subtype='PCM_24', format='FLAC'))
+            levelers = [Leveler(RATE)] if not enhancer and self.specs[0].auto_gain else []
             if self.monitor_enabled:
                 monitor = LiveMonitor(self.monitor_device, self.monitor_volume)
             self.state['status'] = 'recording'
@@ -272,17 +331,18 @@ class Recorder:
                 if enhancer:
                     clean, original = enhancer.process(frames, available)
                     active = enhancer.active
-                    writers[0].writeframesraw(pcm(clean[:valid_samples]))
-                    writers[1].writeframesraw(pcm(original[:valid_samples]))
+                    writers[0].write(clean[:valid_samples])
                 else:
                     original = np.mean(frames, axis=0) if self.mode == 'mix' else frames[0]
+                    if levelers:
+                        original = levelers[0].process(original)
                     clean, active = original, 0
-                    writers[0].writeframesraw(pcm(original[:valid_samples]))
                 elapsed = (time.perf_counter()-started)*1000
                 if monitor:
                     monitor.push(clean[:valid_samples])
                 if self.pipeline == 'live':
-                    segment_buffer = np.concatenate((segment_buffer, clean[:valid_samples]))
+                    # Live text reads the levelled board signal, not the denoised track.
+                    segment_buffer = np.concatenate((segment_buffer, original[:valid_samples]))
                     required = int(self.segment_seconds * RATE)
                     if len(segment_buffer) >= required:
                         save_segment(segment_buffer[:required], segment_start)
@@ -293,7 +353,8 @@ class Recorder:
                 frames_count += 1
                 proc_total += elapsed
                 peak_raw = max(peak_raw, max(float(np.max(np.abs(x))) for x in frames))
-                self.state.update(seconds=samples/RATE, levels=[rms(x) for x in frames], output=rms(clean),
+                gain = enhancer.levelers[active].gain_db() if enhancer and enhancer.levelers[active] else (levelers[0].gain_db() if levelers else 0.)
+                self.state.update(seconds=samples/RATE, levels=[rms(x) for x in frames], output=rms(clean), auto_gain_db=gain,
                     active=active, processing_ms=elapsed, samples=samples, missing_frames=missing[:],
                     monitor_error=monitor.error if monitor else None,
                     waveform_clean=clean[::12].tolist(), waveform_raw=original[::12].tolist())
@@ -325,20 +386,29 @@ class Recorder:
                 process_one()
             if self.pipeline == 'live' and len(segment_buffer) > (overlap if segment_index else 0):
                 save_segment(segment_buffer, segment_start)
-            metadata = {'sample_rate': RATE, 'channels': 1, 'format': 'PCM32 WAV',
+            for writer in writers:
+                writer.close()
+            writers = []
+            collapsed = []
+            for capture in captures:
+                capture.close()
+                collapsed.append(capture.collapse_identical_channels())
+            metadata = {'sample_rate': RATE, 'channels': 1, 'format': 'FLAC 24 bit' if enhancer else None,
                 'model': 'DeepFilterNet3 studio' if enhancer else None, 'pipeline': self.pipeline,
                 'mode': self.mode, 'attenuation_limit_db': self.attenuation,
                 'inputs': [vars(spec) for spec in self.specs], 'duration_seconds': samples/RATE,
                 'native_inputs': [{'file': str(c.native_path), 'sample_rate': c.rate,
-                    'channels': c.channels, 'bits':32, 'frames':c.native_frames} for c in captures],
+                    'channels': c.channels, 'bits':32, 'frames':c.native_frames,
+                    'identical_channels_collapsed': done} for c, done in zip(captures, collapsed)],
                 'average_processing_ms_per_10ms': proc_total/max(frames_count,1),
                 'missing_frames': missing, 'input_peak': peak_raw, 'model_tail_ms': tail_frames*10,
                 'model_delay_samples':enhancer.delay_samples if enhancer else 0,
                 'wet':self.wet, 'local_only':True,
-                'original_note':'Originalspur: gewählter Kanal/Mix auf 48 kHz. Unveränderte volle Eingänge separat als native WAV.'}
+                'auto_gain': [s.auto_gain for s in self.specs],
+                'native_note':'Unveränderte Eingänge als native WAV; identische Kanäle nur einmal gespeichert.'}
             metadata_target.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
-            self.result = {'clean': str(target) if enhancer else str(raw_target), 'original': str(raw_target),
-                           'metadata': str(metadata_target), **metadata}
+            self.result = {'clean': str(target) if enhancer else None,
+                           'source': str(captures[0].native_path), 'metadata': str(metadata_target), **metadata}
         except BaseException as exc:
             self.error = str(exc)
             if metadata_target:
