@@ -38,6 +38,9 @@ MODEL_DECK = os.environ.get('LOCALVOICE_MODEL_DECK', 'http://127.0.0.1:4180')
 NEED_VRAM_GB = float(os.environ.get('LOCALVOICE_NEED_VRAM_GB', '3.5'))
 IDLE_STOP_S = float(os.environ.get('LOCALVOICE_IDLE_STOP_S', '60'))
 KEEP_RESULTS_S = 24*3600
+# Public via Tailscale Funnel: cap uploads and protect the (small) system disk.
+MAX_UPLOAD_MB = float(os.environ.get('LOCALVOICE_MAX_UPLOAD_MB', '600'))
+MIN_FREE_DISK_GB = float(os.environ.get('LOCALVOICE_MIN_FREE_GB', '1.5'))
 LANGUAGES = {'de': 'German', 'en': 'English', 'fr': 'French', 'es': 'Spanish'}
 MODEL_NAME = 'Qwen3-ASR-1.7B (Q8_0, Audio-Encoder bf16) · GPU r9700'
 
@@ -240,9 +243,19 @@ async def upload_audio(job_id: str, request: Request):
     job = jobs.get(job_id)
     if not job or job['state'] != 'waiting_for_audio':
         raise HTTPException(404, 'Auftrag unbekannt.')
+    import shutil
+    if shutil.disk_usage(tempfile.gettempdir()).free/2**30 < MIN_FREE_DISK_GB:
+        raise HTTPException(507, 'Server-Speicher ist voll.')
     handle, path = tempfile.mkstemp(prefix='localvoice-', suffix='.flac')
+    size = 0
     with os.fdopen(handle, 'wb') as out:
         async for part in request.stream():
+            size += len(part)
+            if size > MAX_UPLOAD_MB*2**20:
+                out.close()
+                Path(path).unlink(missing_ok=True)
+                jobs.pop(job_id, None)
+                raise HTTPException(413, f'Aufnahme zu groß (max. {MAX_UPLOAD_MB:.0f} MB).')
             out.write(part)
     job['audio'] = path
     job['state'] = 'queued'

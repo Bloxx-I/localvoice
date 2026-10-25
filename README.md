@@ -43,17 +43,20 @@ Reiter **reSpeaker · USB-Test**.
 
 **„Auf Server verarbeiten“** (auch im Einfach-Modus) schickt die vorbereitete Textspur an den eigenen Server und
 holt das Transkript zurück: **Qwen3-ASR 1.7B** auf der GPU, deutlich schneller als auf einem Laptop-Prozessor.
-Gesendet werden nur die 16-kHz-Textspur (FLAC) und die Abschnittszeiten, über Tailscale und mit Token; der Server
-löscht das Audio nach dem Auftrag. Das Ergebnis landet im selben Format wie lokal (Mitlesen, Export, Liste).
+Gesendet werden nur die 16-kHz-Textspur (FLAC) und die Abschnittszeiten, per HTTPS mit langem Token (256 Bit);
+der Server löscht das Audio nach dem Auftrag. Das Ergebnis landet im selben Format wie lokal (Mitlesen, Export, Liste).
+
+Adresse: **`https://r9700.tail759c8d.ts.net:10000`** – öffentlich über Tailscale Funnel, auf dem Laptop ist kein
+Tailscale nötig. Ohne gültiges Token antwortet jeder Endpunkt mit 401; Uploads sind auf 600 MB begrenzt und werden
+abgelehnt, wenn auf dem Server weniger als 1,5 GB frei sind. Im Tailnet zusätzlich unter Port 8650.
 
 - Einrichten: `zsh server/deploy.sh r9700` – kopiert den Dienst, lädt das Modell (`ggml-org/Qwen3-ASR-1.7B-GGUF`,
   Q8_0 + Audio-Encoder bf16, zusammen 2,6 GB), erzeugt das Token in `/srv/ai/apps/localvoice/.env` und gibt
-  `https://<server>:8650` nur im Tailnet frei.
+  ihn öffentlich unter `https://<server>:10000` (Funnel) und im Tailnet unter `:8650` frei.
 - Der Dienst startet einen eigenen llama.cpp-Server nur für die Dauer eines Auftrags. Reicht der Grafikspeicher
   nicht, pausiert er das aktive Sprachmodell im Model Deck und startet es danach wieder.
 - In der App: Experte → Einrichtung → **Server**: Adresse, Token, „Verbindung testen“ und optional
   „Nach jeder Aufnahme auf dem Server“. Im Einfach-Modus fragt der Knopf beim ersten Mal nach dem Token.
-- Der Rechner mit LocalVoice braucht dafür Tailscale.
 
 ## Wie es arbeitet
 

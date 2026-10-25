@@ -26,7 +26,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now localvoice-asr.service
 sudo systemctl restart localvoice-asr.service
 sudo tailscale serve --bg --https=8650 http://127.0.0.1:8650 >/dev/null
+# Public (no Tailscale needed on the client): Funnel allows only 443, 8443 and 10000.
+sudo tailscale funnel --bg --https=10000 http://127.0.0.1:8650 >/dev/null
 sleep 3
 systemctl is-active localvoice-asr.service
-echo "Adresse: https://\$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'):8650"
+name=\$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+echo "Öffentlich: https://\$name:10000   ·   Tailnet: https://\$name:8650"
 REMOTE

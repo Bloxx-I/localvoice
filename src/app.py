@@ -242,7 +242,7 @@ class Studio(Window):
         side.addWidget(self.output_card)
 
         server, svl = section('SERVER (r9700)',8)
-        self.server_url = QLineEdit(self.preferences.get('server_url','https://r9700.tail759c8d.ts.net:8650'))
+        self.server_url = QLineEdit(self.preferences.get('server_url','https://r9700.tail759c8d.ts.net:10000'))
         self.server_url.setPlaceholderText('https://…:8650')
         self.server_token = QLineEdit(self.preferences.get('server_token',''))
         self.server_token.setPlaceholderText('Token')

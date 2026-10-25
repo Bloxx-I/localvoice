@@ -36,7 +36,7 @@ class Server:
             detail = exc.read().decode('utf-8', 'replace')
             raise RuntimeError('Token ungültig.' if exc.code == 401 else f'Server meldet {exc.code}: {detail[:200]}')
         except urllib.error.URLError as exc:
-            raise RuntimeError(f'Server nicht erreichbar ({exc.reason}). Läuft Tailscale auf diesem Rechner?')
+            raise RuntimeError(f'Server nicht erreichbar ({exc.reason}). Internetverbindung und Server-Adresse prüfen.')
 
 
 def main():
