@@ -128,8 +128,6 @@ class Combined(QMainWindow):
     # --- updates via the home server ---------------------------------------------
 
     def check_update(self, manual=False):
-        if not self.studio.server_ready(ask=manual):
-            return
         process = QProcess(self)
         def done(code, status):
             out = bytes(process.readAllStandardOutput()).decode('utf-8', 'replace').strip()
@@ -153,8 +151,7 @@ class Combined(QMainWindow):
             elif manual:
                 self.statusBar().showMessage(f"LocalVoice ist aktuell ({latest['commit']}, {when}).", 8000)
         process.finished.connect(done)
-        process.start(sys.executable, ['-u', str(ROOT/'src'/'updater.py'), '--check',
-            '--url', self.studio.server_url.text().strip(), '--token', self.studio.server_token.text().strip()])
+        process.start(sys.executable, ['-u', str(ROOT/'src'/'updater.py'), '--check'])
 
     def install_update(self):
         if self.busy() or self.usb.capture.recording:
@@ -168,7 +165,6 @@ class Combined(QMainWindow):
             return
         self.studio.save_preferences()
         ok = QProcess.startDetached(sys.executable, ['-u', str(ROOT/'src'/'updater.py'), '--install',
-            '--url', self.studio.server_url.text().strip(), '--token', self.studio.server_token.text().strip(),
             '--pid', str(os.getpid())], str(ROOT))
         ok = ok[0] if isinstance(ok, tuple) else ok
         if not ok:

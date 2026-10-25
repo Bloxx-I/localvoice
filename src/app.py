@@ -254,7 +254,7 @@ class Studio(Window):
         self.server_test = QPushButton('Verbindung testen')
         self.server_test.clicked.connect(self.test_server)
         self.update_check_button = QPushButton('Nach Updates suchen')
-        self.update_check_button.setToolTip('Neue LocalVoice-Versionen kommen über deinen Server.')
+        self.update_check_button.setToolTip('Neue LocalVoice-Versionen kommen direkt von GitHub.')
         for widget in (self.server_url, self.server_token, self.server_auto, self.server_test, self.update_check_button):
             svl.addWidget(widget)
         side.addWidget(server)

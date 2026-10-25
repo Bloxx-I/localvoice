@@ -12,25 +12,30 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1]/'src'
-TOKEN = 'x'*43
+SHA = 'abc1234def5678'
 
 
-def package(commit):
+def package():
+    # Like a GitHub archive: everything below one top-level folder.
+    top = f'localvoice-{SHA}/'
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as z:
-        z.writestr('src/combined.py', f'# neue Version {commit}\n')
-        z.writestr('src/updater.py', (SRC/'updater.py').read_text(encoding='utf-8'))
-        z.writestr('README.md', 'neu')
-        z.writestr('preferences.json', '{"gefährlich": true}')   # must never be copied
-        z.writestr('version.json', json.dumps({'commit': commit}))
+        z.writestr(top+'src/combined.py', '# neue Version\n')
+        z.writestr(top+'src/updater.py', (SRC/'updater.py').read_text(encoding='utf-8'))
+        z.writestr(top+'README.md', 'neu')
+        z.writestr(top+'preferences.json', '{"gefährlich": true}')   # must never be copied
     return buffer.getvalue()
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.headers.get('Authorization') != f'Bearer {TOKEN}':
-            self.send_response(401); self.end_headers(); return
-        body = json.dumps({'commit': 'neu123', 'subject': 'Test'}).encode() if self.path == '/v1/update' else package('neu123')
+        if self.path == '/commits/main':
+            body = json.dumps({'sha': SHA, 'commit': {'message': 'Neue Funktion\n\nDetails',
+                                                      'committer': {'date': '2026-10-26T10:00:00Z'}}}).encode()
+        elif self.path == f'/zip/{SHA}':
+            body = package()
+        else:
+            self.send_response(404); self.end_headers(); return
         self.send_response(200); self.end_headers(); self.wfile.write(body)
 
     def log_message(self, *args):
@@ -55,30 +60,33 @@ class UpdaterTests(unittest.TestCase):
         self.server.shutdown(); self.server.server_close()
         shutil.rmtree(self.root)
 
-    def run_updater(self, *args, token=TOKEN):
-        env = dict(os.environ, LOCALVOICE_NO_RESTART='1')
-        return subprocess.run([sys.executable, str(self.root/'src'/'updater.py'), '--url', self.url, '--token', token, *args],
+    def run_updater(self, *args, url=None):
+        url = url or self.url
+        env = dict(os.environ, LOCALVOICE_NO_RESTART='1', LOCALVOICE_UPDATE_API=url, LOCALVOICE_UPDATE_DOWNLOAD=url+'/zip')
+        return subprocess.run([sys.executable, str(self.root/'src'/'updater.py'), *args],
                               capture_output=True, text=True, env=env, timeout=60)
 
     def test_check_reports_new_version(self):
         info = json.loads(self.run_updater('--check').stdout)
         self.assertTrue(info['available'])
-        self.assertEqual((info['current'], info['latest']['commit']), ('alt000', 'neu123'))
+        self.assertEqual((info['current'], info['latest']['commit']), ('alt000', SHA[:7]))
+        self.assertEqual(info['latest']['subject'], 'Neue Funktion')
 
     def test_install_replaces_program_but_keeps_user_data(self):
         dead = subprocess.Popen([sys.executable, '-c', 'pass']); dead.wait()
         result = self.run_updater('--install', '--pid', str(dead.pid))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('neue Version neu123', (self.root/'src'/'combined.py').read_text())
-        self.assertEqual(json.loads((self.root/'version.json').read_text())['commit'], 'neu123')
+        self.assertIn('neue Version', (self.root/'src'/'combined.py').read_text())
+        self.assertEqual(json.loads((self.root/'version.json').read_text())['commit'], SHA[:7])
+        self.assertFalse(json.loads(self.run_updater('--check').stdout)['available'])
         self.assertEqual(json.loads((self.root/'preferences.json').read_text()), {'server_token': 'meins'})
         self.assertEqual((self.root/'Aufnahmen'/'vorlesung_clean.flac').read_bytes(), b'audio')
         self.assertIn('Update fertig', (self.root/'Logs'/'update.log').read_text(encoding='utf-8'))
 
-    def test_wrong_token_is_reported(self):
-        result = self.run_updater('--check', token='falsch')
+    def test_unreachable_github_is_reported(self):
+        result = self.run_updater('--check', url='http://127.0.0.1:9')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Token ungültig', result.stderr)
+        self.assertIn('nicht erreichbar', result.stderr)
 
 
 if __name__ == '__main__':

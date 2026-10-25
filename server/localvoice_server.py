@@ -27,7 +27,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = os.environ.get('LOCALVOICE_TOKEN', '')
@@ -39,7 +38,6 @@ MODEL_DECK = os.environ.get('LOCALVOICE_MODEL_DECK', 'http://127.0.0.1:4180')
 NEED_VRAM_GB = float(os.environ.get('LOCALVOICE_NEED_VRAM_GB', '3.5'))
 IDLE_STOP_S = float(os.environ.get('LOCALVOICE_IDLE_STOP_S', '60'))
 KEEP_RESULTS_S = 24*3600
-UPDATES = ROOT/'updates'   # filled by release.sh on the Mac: latest.zip + latest.json
 # Public via Tailscale Funnel: cap uploads and protect the (small) system disk.
 MAX_UPLOAD_MB = float(os.environ.get('LOCALVOICE_MAX_UPLOAD_MB', '600'))
 MIN_FREE_DISK_GB = float(os.environ.get('LOCALVOICE_MIN_FREE_GB', '1.5'))
@@ -228,21 +226,6 @@ def health():
     ready = MODEL.exists() and MMPROJ.exists()
     return {'ok': ready, 'model': MODEL_NAME if ready else None, 'busy': state['busy'],
             'queued': work.qsize(), 'engine_running': bool(state['process'])}
-
-
-@app.get('/v1/update', dependencies=[Depends(authorized)])
-def update_info():
-    try:
-        return json.loads((UPDATES/'latest.json').read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        raise HTTPException(404, 'Kein Update veröffentlicht.')
-
-
-@app.get('/v1/update/download', dependencies=[Depends(authorized)])
-def update_download():
-    if not (UPDATES/'latest.zip').exists():
-        raise HTTPException(404, 'Kein Update veröffentlicht.')
-    return FileResponse(UPDATES/'latest.zip', media_type='application/zip', filename='localvoice.zip')
 
 
 @app.post('/v1/jobs', dependencies=[Depends(authorized)])

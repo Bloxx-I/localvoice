@@ -1,9 +1,9 @@
-"""In-app updates via the home server (the GitHub repo is private).
+"""In-app updates straight from GitHub (public repo Bloxx-I/localvoice, branch main).
 
-check:   python updater.py --check --url … --token …            → prints JSON {current, latest, available}
-install: python updater.py --install --url … --token … --pid N  → waits for the app to exit, replaces the
-         program files (never recordings, models, settings or the Python environment), updates the
-         packages and restarts LocalVoice. Everything is logged to Logs/update.log.
+check:   python updater.py --check                → prints JSON {current, latest, available, dev}
+install: python updater.py --install --pid N      → waits for the app to exit, replaces the program files
+         (never recordings, models, settings or the Python environment), updates the packages and
+         restarts LocalVoice. Everything is logged to Logs/update.log.
 """
 import argparse
 import json
@@ -22,11 +22,15 @@ for _stream in (sys.stdout, sys.stderr):
     if _stream is not None and hasattr(_stream, 'reconfigure'):
         _stream.reconfigure(encoding='utf-8')
 
+REPO = 'Bloxx-I/localvoice'
+BRANCH = 'main'
+API = os.environ.get('LOCALVOICE_UPDATE_API', f'https://api.github.com/repos/{REPO}')
+DOWNLOAD = os.environ.get('LOCALVOICE_UPDATE_DOWNLOAD', f'https://codeload.github.com/{REPO}/zip')
 ROOT = Path(__file__).resolve().parent.parent
 # Only these come from the update; user data and runtime folders are never touched.
 PROGRAM = ('src', 'installer', 'server', 'tests', 'docs', 'requirements.txt', 'requirements-mac.txt',
            'requirements-windows.txt', 'README.md', 'Installieren-Windows.cmd', 'Deinstallieren-Windows.cmd',
-           'Installieren-Mac.command', 'build.sh', 'Launcher.swift', 'release.sh', 'version.json',
+           'Installieren-Mac.command', 'build.sh', 'Launcher.swift',
            'models/DeepFilterNet3_onnx.tar.gz')
 
 
@@ -47,23 +51,30 @@ def is_dev_checkout():
     return (ROOT/'.git').exists()
 
 
-def request(url, token, path, timeout=30):
-    req = urllib.request.Request(url.rstrip('/')+path, headers={'Authorization': f'Bearer {token}'})
+def fetch(url, timeout=30):
+    req = urllib.request.Request(url, headers={'User-Agent': 'LocalVoice-Updater',
+                                               'Accept': 'application/vnd.github+json'})
     try:
         return urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as exc:
-        raise RuntimeError('Token ungültig.' if exc.code == 401 else
-                           'Auf dem Server ist noch kein Update veröffentlicht.' if exc.code == 404 else f'Server meldet {exc.code}.')
+        raise RuntimeError('GitHub-Limit erreicht, später erneut versuchen.' if exc.code in (403, 429)
+                           else f'GitHub meldet {exc.code}.')
     except urllib.error.URLError as exc:
-        raise RuntimeError(f'Server nicht erreichbar ({exc.reason}).')
+        raise RuntimeError(f'GitHub nicht erreichbar ({exc.reason}).')
 
 
-def check(url, token):
-    with request(url, token, '/v1/update') as response:
-        latest = json.loads(response.read())
+def latest():
+    with fetch(f'{API}/commits/{BRANCH}') as response:
+        data = json.loads(response.read())
+    return {'commit': data['sha'][:7], 'sha': data['sha'], 'date': data['commit']['committer']['date'],
+            'subject': data['commit']['message'].splitlines()[0]}
+
+
+def check():
+    newest = latest()
     current = local_version()
-    return {'current': current, 'latest': latest, 'dev': is_dev_checkout(),
-            'available': latest.get('commit') != current}
+    return {'current': current, 'latest': newest, 'dev': is_dev_checkout(),
+            'available': newest['commit'] != current}
 
 
 def log(message):
@@ -118,18 +129,20 @@ def restart():
             subprocess.Popen([str(python), str(ROOT/'src'/'combined.py')], cwd=ROOT, start_new_session=True)
 
 
-def install(url, token, pid):
+def install(pid):
     log(f'Update gestartet (aktuell {local_version()}).')
     if is_dev_checkout():
         raise RuntimeError('Entwicklungsordner mit git – bitte mit „git pull“ aktualisieren.')
+    newest = latest()
     with tempfile.TemporaryDirectory(prefix='localvoice-update-') as tmp:
         archive = Path(tmp)/'update.zip'
-        with request(url, token, '/v1/update/download', timeout=600) as response, open(archive, 'wb') as out:
+        with fetch(f"{DOWNLOAD}/{newest['sha']}", timeout=600) as response, open(archive, 'wb') as out:
             shutil.copyfileobj(response, out)
         with zipfile.ZipFile(archive) as z:
             z.extractall(Path(tmp)/'new')
-        new = Path(tmp)/'new'
-        if not (new/'src'/'combined.py').exists():
+        # GitHub archives contain one top-level folder (localvoice-<sha>/).
+        new = next((d for d in (Path(tmp)/'new').iterdir() if (d/'src'/'combined.py').exists()), None)
+        if new is None:
             raise RuntimeError('Update-Paket ist unvollständig.')
         wait_for_exit(pid)
         for name in PROGRAM:
@@ -139,24 +152,23 @@ def install(url, token, pid):
             elif source.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        (ROOT/'version.json').write_text(json.dumps(newest, ensure_ascii=False, indent=2), encoding='utf-8')
         log(f'Dateien ersetzt (neu {local_version()}).')
     install_packages()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--url', required=True)
-    parser.add_argument('--token', required=True)
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--install', action='store_true')
     parser.add_argument('--pid', type=int, default=0)
     args = parser.parse_args()
     try:
         if args.check:
-            print(json.dumps(check(args.url, args.token), ensure_ascii=False), flush=True)
+            print(json.dumps(check(), ensure_ascii=False), flush=True)
         elif args.install:
             try:
-                install(args.url, args.token, args.pid)
+                install(args.pid)
                 log('Update fertig.')
             finally:
                 restart()
