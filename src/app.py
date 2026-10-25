@@ -1,5 +1,6 @@
 """Compact native recording studio. Audio business logic lives in app_core."""
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -245,7 +246,7 @@ class Studio(Window):
         server, svl = section('SERVER (r9700)',8)
         self.server_url = QLineEdit(self.preferences.get('server_url','https://r9700.tail759c8d.ts.net:10000'))
         self.server_url.setPlaceholderText('https://…:8650')
-        self.server_token = QLineEdit(self.preferences.get('server_token',''))
+        self.server_token = QLineEdit(self.clean_token(self.preferences.get('server_token','')))
         self.server_token.setPlaceholderText('Token')
         self.server_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.server_auto = QCheckBox('Nach jeder Aufnahme auf dem Server')
@@ -765,18 +766,33 @@ class Studio(Window):
 
     # --- home server ------------------------------------------------------------
 
+    @staticmethod
+    def clean_token(text):
+        """Accept the token as copied from anywhere: 'LOCALVOICE_TOKEN=…', quotes, spaces, line breaks."""
+        text = re.sub(r'\s+', '', text or '').strip('\'"')
+        return text.split('=', 1)[1] if text.upper().startswith('LOCALVOICE_TOKEN=') else text
+
+    def ask_token(self, reason=''):
+        message = (reason+'\n\n' if reason else '')+('Token für deinen LocalVoice-Server eingeben.\n'
+            'Es sind 43 Zeichen (Buchstaben, Ziffern, - und _). Die ganze Zeile „LOCALVOICE_TOKEN=…“ geht auch.')
+        text = ''
+        while True:
+            text, ok = QInputDialog.getText(self, 'Heimserver', message, QLineEdit.EchoMode.Normal, text)
+            if not ok:
+                return False
+            token = self.clean_token(text)
+            if re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+                self.server_token.setText(token)
+                self.save_preferences()
+                return True
+            bad = sorted({c for c in token if not re.fullmatch(r'[A-Za-z0-9_-]', c)})
+            message = (f'Das sind {len(token)} Zeichen statt 43' + (f' – ungültige Zeichen: {" ".join(bad)}' if bad else '')
+                       + '.\nBitte prüfen und erneut eingeben.')
+
     def server_ready(self, ask=True):
         if self.server_url.text().strip() and self.server_token.text().strip():
             return True
-        if not ask:
-            return False
-        token, ok = QInputDialog.getText(self, 'Heimserver', 'Token für den LocalVoice-Server\n'
-            '(steht auf dem Server in /srv/ai/apps/localvoice/.env):', QLineEdit.EchoMode.Password)
-        if ok and token.strip():
-            self.server_token.setText(token.strip())
-            self.save_preferences()
-            return True
-        return False
+        return self.ask_token() if ask else False
 
     def stt_command(self):
         if not self.use_server:
@@ -1060,6 +1076,11 @@ class Studio(Window):
         if code:
             # Keep the error visible and bring the previous text back.
             error = (self.voxtral_error.strip().splitlines() or ['Abgebrochen.'])[-1][:300]
+            if server and 'Token ungültig' in error:
+                # A wrong saved token must never lock the user out: forget it and ask again.
+                self.server_token.clear()
+                self.save_preferences()
+                QTimer.singleShot(0, lambda: self.ask_token('Der Server hat das gespeicherte Token abgelehnt.') and self.transcribe_on_server())
             self.stt_status.setText(('Server: ' if server else 'Transkription: ')+error)
             repolish(self.stt_status,'kind','bad')
             print(f'[Transkription {"Server" if server else "lokal"}] {self.voxtral_error[-2000:]}', flush=True)
