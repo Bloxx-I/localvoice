@@ -1,0 +1,14 @@
+[Unit]
+Description=LocalVoice Transkription (Qwen3-ASR 1.7B auf der GPU, tailnet-only)
+After=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=/srv/ai/apps/localvoice
+EnvironmentFile=/srv/ai/apps/localvoice/.env
+ExecStart=/srv/ai/apps/localvoice/.venv/bin/uvicorn localvoice_server:app --host 127.0.0.1 --port 8650 --no-access-log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

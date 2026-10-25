@@ -267,7 +267,10 @@ class IntegratedStudio(Studio):
     def enhance_finished(self, code, status):
         super().enhance_finished(code, status)
         transcribe = self.auto_transcribe.isChecked() or not self.expert
-        if code == 0 and self.pipeline_used == 'deferred' and transcribe and asr_ready():
+        if code == 0 and self.pipeline_used == 'deferred' and transcribe and self.server_auto.isChecked() and self.server_ready(ask=False):
+            self.pipeline_used = None
+            self.transcribe_on_server()
+        elif code == 0 and self.pipeline_used == 'deferred' and transcribe and asr_ready():
             self.pipeline_used = None
             self.transcribe()
         elif code == 0 and self.pipeline_used == 'deferred' and not asr_ready():

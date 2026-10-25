@@ -291,7 +291,8 @@ class Window(QMainWindow):
 
     def transcribe(self):
         if not self.last or self.voxtral: return
-        if not (ROOT/'models/qwen3-asr/.ready.json').exists():
+        command = self.stt_command()
+        if command is None and not (ROOT/'models/qwen3-asr/.ready.json').exists():
             self.stt_status.setText('Qwen3-ASR wird noch heruntergeladen. Aufnahme und Vergleich funktionieren bereits.')
             return
         self.transcript.clear()
@@ -310,13 +311,17 @@ class Window(QMainWindow):
         self.voxtral.readyReadStandardError.connect(self.stt_stderr)
         self.voxtral.finished.connect(self.stt_finished)
         self.voxtral.errorOccurred.connect(lambda e: self.stt_status.setText(f'Transkription konnte nicht starten: {e}'))
-        self.voxtral.start(sys.executable, ['-u', str(ROOT/'src/transcribe.py'), self.last['clean'],
+        self.voxtral.start(sys.executable, command or ['-u', str(ROOT/'src/transcribe.py'), self.last['clean'],
             '--language', self.language.currentData(), '--model', str(ROOT/'models/qwen3-asr'),
             '--context', self.asr_context(), '--source', self.asr_source()])
         self.transcribe_button.setEnabled(False)
         self.record_button.setEnabled(False)
         self.cancel_transcribe.setEnabled(True)
-        self.stt_status.setText('Qwen3-ASR wird lokal geladen …')
+        self.stt_status.setText('Verbindung zum Server …' if command else 'Qwen3-ASR wird lokal geladen …')
+
+    def stt_command(self):
+        """Arguments for a non-local transcription worker, or None for the local one."""
+        return None
 
     def asr_context(self):
         return ''

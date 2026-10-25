@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
     QVBoxLayout, QLabel, QPushButton, QCheckBox, QComboBox, QProgressBar,
     QDoubleSpinBox, QSpinBox, QFrame, QTextEdit, QSlider, QScrollArea,
     QSizePolicy, QGridLayout, QLineEdit, QListWidget, QListWidgetItem, QStackedWidget,
-    QAbstractSpinBox, QMenu, QFileDialog, QButtonGroup)
+    QAbstractSpinBox, QMenu, QFileDialog, QButtonGroup, QInputDialog)
 
 import lecture
 import library
@@ -151,6 +151,7 @@ class Studio(Window):
         self.wet = 1.0
         self.expert = False
         self.player_loaded = None
+        self.use_server = False
         self.auto_boxes = {}
         self.download_process = None
         self.folder = default_recordings()
@@ -239,6 +240,21 @@ class Studio(Window):
         self.output_card, self.output_box = section('ABHÖREN')
         self.output_card.hide()
         side.addWidget(self.output_card)
+
+        server, svl = section('SERVER (r9700)',8)
+        self.server_url = QLineEdit(self.preferences.get('server_url','https://r9700.tail759c8d.ts.net:8650'))
+        self.server_url.setPlaceholderText('https://…:8650')
+        self.server_token = QLineEdit(self.preferences.get('server_token',''))
+        self.server_token.setPlaceholderText('Token')
+        self.server_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.server_auto = QCheckBox('Nach jeder Aufnahme auf dem Server')
+        self.server_auto.setChecked(self.preferences.get('server_auto', False))
+        self.server_auto.setToolTip('Statt lokal: Text mit Qwen3-ASR 1.7B auf der GPU des Heimservers.')
+        self.server_test = QPushButton('Verbindung testen')
+        self.server_test.clicked.connect(self.test_server)
+        for widget in (self.server_url, self.server_token, self.server_auto, self.server_test):
+            svl.addWidget(widget)
+        side.addWidget(server)
 
         storage, fl = section('SPEICHERORT',6)
         self.folder_label = label(self.folder.name,'muted')
@@ -435,6 +451,11 @@ class Studio(Window):
         self.transcribe_button.clicked.connect(self.transcribe)
         self.transcribe_button.setEnabled(False)
         th.addWidget(self.transcribe_button)
+        self.server_button = QPushButton('Auf Server verarbeiten')
+        self.server_button.setToolTip('Transkript mit dem besten Modell (Qwen3-ASR 1.7B) auf der GPU deines Heimservers – viel schneller als auf dem Laptop.')
+        self.server_button.clicked.connect(self.transcribe_on_server)
+        self.server_button.setEnabled(False)
+        th.addWidget(self.server_button)
         self.cancel_transcribe = QPushButton('Abbrechen')
         self.cancel_transcribe.clicked.connect(self.cancel_stt)
         self.cancel_transcribe.setEnabled(False)
@@ -700,9 +721,62 @@ class Studio(Window):
         self.stt_status.setText('Sprachmodell bereit · alles läuft offline.' if ready else 'Download fehlgeschlagen: '+error[-200:])
         self.transcribe_button.setEnabled(ready and self.last is not None)
 
+    # --- home server ------------------------------------------------------------
+
+    def server_ready(self, ask=True):
+        if self.server_url.text().strip() and self.server_token.text().strip():
+            return True
+        if not ask:
+            return False
+        token, ok = QInputDialog.getText(self, 'Heimserver', 'Token für den LocalVoice-Server\n'
+            '(steht auf dem Server in /srv/ai/apps/localvoice/.env):', QLineEdit.EchoMode.Password)
+        if ok and token.strip():
+            self.server_token.setText(token.strip())
+            self.save_preferences()
+            return True
+        return False
+
+    def stt_command(self):
+        if not self.use_server:
+            return None
+        return ['-u', str(ROOT/'src/server_transcribe.py'), self.last['clean'], '--url', self.server_url.text().strip(),
+                '--token', self.server_token.text().strip(), '--language', self.language.currentData(),
+                '--context', self.asr_context()]
+
+    def transcribe_on_server(self):
+        if not self.last or self.voxtral or not self.server_ready():
+            return
+        self.use_server = True
+        self.transcribe()
+        if self.voxtral:
+            self.server_button.setEnabled(False)
+            self.enhance_button.setEnabled(False)
+            self.open_pair.setEnabled(False)
+
+    def test_server(self):
+        if not self.server_ready(): return
+        process = QProcess(self)
+        self.server_test.setEnabled(False)
+        self.server_test.setText('Prüfe …')
+        def done(code, status):
+            out = bytes(process.readAllStandardOutput()).decode('utf-8','replace').strip().splitlines()
+            err = bytes(process.readAllStandardError()).decode('utf-8','replace').strip()
+            try: message = json.loads(out[-1])['status']
+            except (IndexError,ValueError,KeyError): message = err[-200:] or 'Keine Antwort.'
+            self.server_test.setText('Verbindung testen')
+            self.server_test.setEnabled(True)
+            self.stt_status.setText(message)
+            process.deleteLater()
+        process.finished.connect(done)
+        process.start(sys.executable,['-u',str(ROOT/'src/server_transcribe.py'),'-','--url',self.server_url.text().strip(),
+                                      '--token',self.server_token.text().strip(),'--check'])
+
     def save_preferences(self):
         super().save_preferences()
         self.preferences['expert'] = self.expert
+        self.preferences['server_url'] = self.server_url.text().strip()
+        self.preferences['server_token'] = self.server_token.text().strip()
+        self.preferences['server_auto'] = self.server_auto.isChecked()
         for name,box in self.auto_boxes.items():
             self.preferences.setdefault('inputs',{}).setdefault(name,{})['auto_gain'] = box.isChecked()
         self.config_path.write_text(json.dumps(self.preferences, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -821,6 +895,7 @@ class Studio(Window):
         for button in (self.play_button,self.hold_button):
             button.setEnabled(not self.recorder)
         self.transcribe_button.setEnabled(self.voxtral is None and asr_ready())
+        self.server_button.setEnabled(self.voxtral is None and not self.recorder)
         self.enhance_button.setEnabled(self.enhance_process is None and not busy)
         text_path = Path(clean).with_suffix('.txt')
         self.transcript.setPlainText(text_path.read_text(encoding='utf-8') if text_path.exists() else '')
@@ -891,6 +966,7 @@ class Studio(Window):
 
     def set_record_controls(self,enabled):
         super().set_record_controls(enabled)
+        self.server_button.setEnabled(enabled and self.last is not None and self.voxtral is None)
         self.enhance_button.setEnabled(enabled and self.last is not None and self.enhance_process is None)
         self.open_pair.setEnabled(enabled)
 
@@ -901,13 +977,16 @@ class Studio(Window):
             self.open_pair.setEnabled(False)
 
     def stt_finished(self,code,status):
+        server = self.use_server
+        self.use_server = False
         super().stt_finished(code,status)
+        self.server_button.setEnabled(self.last is not None)
         self.enhance_button.setEnabled(self.last is not None and self.enhance_process is None)
         self.open_pair.setEnabled(True)
         if code == 0:
             self.listen.reload_transcript()
             self.refresh_library()
-            self.stt_status.setText('Transkript fertig · „Nachhören“ zeigt es synchron zum Audio.')
+            self.stt_status.setText(('Transkript vom Server fertig' if server else 'Transkript fertig')+' · „Nachhören“ zeigt es synchron zum Audio.')
 
     def open_recording(self):
         from PySide6.QtWidgets import QFileDialog
