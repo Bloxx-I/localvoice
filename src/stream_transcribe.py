@@ -14,20 +14,17 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--model', required=True)
     p.add_argument('--language', default='de')
+    p.add_argument('--context', default='')
     args = p.parse_args()
     model_path = Path(args.model).resolve()
     if not (model_path/'.ready.json').exists():
         raise RuntimeError('Das lokale ASR-Modell fehlt.')
-    import mlx.core as mx
-    import numpy as np
     import soundfile as sf
     import soxr
-    from mlx_audio.stt.utils import load_model
-    mx.set_cache_limit(256*1024*1024)
+    from asr import ASR
     emit(status='Live-Text: lokales Modell wird geladen …')
-    model = load_model(model_path, strict=True)
+    model = ASR(model_path)
     emit(status='Live-Text bereit · wartet auf den ersten Audioabschnitt')
-    language = {'de':'German','en':'English','fr':'French','es':'Spanish'}.get(args.language)
     text, segments, target = '', [], None
     for line in sys.stdin:
         event = json.loads(line)
@@ -45,18 +42,13 @@ def main():
         data, rate = sf.read(path, dtype='float32')
         if rate != 16000:
             data = soxr.resample(data, rate, 16000)
-        if len(data) and np.sqrt(np.mean(data.astype(np.float64)**2)) >= .0001:
-            result = model.generate(np.ascontiguousarray(data), language=language, max_tokens=512, temperature=0.0)
-            incoming = result.text.strip()
-        else:
-            incoming = ''
+        incoming = model.transcribe(data, args.language, args.context)
         text = append_text(text, incoming)
         target.with_suffix('.partial.txt').write_text(text, encoding='utf-8')
         segments.append({'index':event['index'], 'start':event['start'],
                          'duration':len(data)/16000, 'inference_seconds':time.monotonic()-started,
                          'text':incoming})
         emit(text=text, completed=event['index']+1, inference_seconds=segments[-1]['inference_seconds'])
-        mx.clear_cache()
 
 
 if __name__ == '__main__':

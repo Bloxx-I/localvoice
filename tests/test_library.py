@@ -17,7 +17,7 @@ class LibraryTests(unittest.TestCase):
                 (folder/f'{stem}_original.wav').write_bytes(b'')
                 (folder/f'{stem}.json').write_text(json.dumps({'duration_seconds': 12.5}))
             (folder/'LocalVoice_2026-10-25_21-53-22_1_clean.txt').write_text('Hallo Welt')
-            (folder/'orphan_clean.wav').write_bytes(b'')
+            (folder/'notes.wav').write_bytes(b'')
             entries = library.scan(folder)
             self.assertEqual(len(entries), 2)
             self.assertEqual(entries[0]['variant'], 'Natürlich')
@@ -35,6 +35,17 @@ class LibraryTests(unittest.TestCase):
             srt = library.to_srt(items)
             self.assertIn('00:00:04,500 --> 00:00:09,500\nvier fünf', srt)
             self.assertTrue(library.to_vtt(items).startswith('WEBVTT'))
+
+    def test_scan_finds_flac_without_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder)/'LocalVoice_2026-10-26_09-00-00_1_clean.flac').write_bytes(b'')
+            entries = library.scan(folder)
+            self.assertEqual(len(entries), 1)
+            self.assertIsNone(entries[0]['original'])
+
+    def test_markdown_lists_bookmarks(self):
+        md = library.to_markdown('LocalVoice_x_clean.flac', 'Text', [], 75, [{'t': 65, 'note': 'klausurrelevant'}])
+        self.assertIn('**1:05** klausurrelevant', md)
 
     def test_fallback_single_cue(self):
         self.assertEqual(library.cues('/nope_clean.wav', 'Text', 3.), [(0., 3., 'Text')])

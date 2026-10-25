@@ -4,13 +4,14 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import lecture
 from stream_text import append_text
 
 STAMP = re.compile(r'(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_\d+_?(.*)$')
 
 
 def metadata_path(clean):
-    return Path(str(clean).replace('_clean.wav', '.json'))
+    return lecture.metadata_path(clean)
 
 
 def duration_of(clean):
@@ -26,13 +27,11 @@ def duration_of(clean):
 
 
 def scan(folder):
-    """All complete clean/original pairs in a folder, newest first."""
+    """All recordings with a listening track in a folder, newest first."""
     entries = []
-    for clean in Path(folder).glob('*_clean.wav'):
-        original = Path(str(clean).replace('_clean.wav', '_original.wav'))
-        if not original.exists():
-            continue
-        stem = clean.name.removeprefix('LocalVoice_').removesuffix('_clean.wav')
+    for clean in lecture.clean_files(folder):
+        original = Path(str(clean).replace(clean.name, lecture.stem_of(clean)+'_original.wav'))
+        stem = lecture.stem_of(clean).removeprefix('LocalVoice_')
         match = STAMP.match(stem)
         try:
             created = datetime.strptime(' '.join(match.groups()[:2]), '%Y-%m-%d %H-%M-%S') if match else None
@@ -43,7 +42,7 @@ def scan(folder):
             text = text_path.read_text(encoding='utf-8').strip() if text_path.exists() else ''
         except OSError:
             text = ''
-        entries.append({'clean': str(clean), 'original': str(original),
+        entries.append({'clean': str(clean), 'original': str(original) if original.exists() else None,
             'created': created or datetime.fromtimestamp(clean.stat().st_mtime),
             'variant': (match.group(3) if match else '').replace('_', ' '),
             'duration': duration_of(clean), 'text': text})
@@ -90,8 +89,8 @@ def to_vtt(items):
     return 'WEBVTT\n\n' + '\n'.join(f'{stamp(a, ".")} --> {stamp(b, ".")}\n{text}\n' for a, b, text in items)
 
 
-def to_markdown(clean, text, items, duration=0.):
-    entry = Path(clean).name.removeprefix('LocalVoice_').removesuffix('_clean.wav')
+def to_markdown(clean, text, items, duration=0., bookmarks=()):
+    entry = lecture.stem_of(clean).removeprefix('LocalVoice_')
     lines = [f'# Transkript · {entry}', '',
              f'- Datei: `{Path(clean).name}`',
              f'- Dauer: {int(duration)//60}:{int(duration)%60:02}',
@@ -100,4 +99,8 @@ def to_markdown(clean, text, items, duration=0.):
         lines += [f'**[{int(a)//60}:{int(a)%60:02}]** {t}' + '\n' for a, _, t in items]
     else:
         lines.append(text.strip() + '\n')
+    if bookmarks:
+        lines += ['## Merker', '']
+        lines += [f'- **{int(b["t"])//60}:{int(b["t"])%60:02}** {b.get("note") or ""}'.rstrip() for b in bookmarks]
+        lines.append('')
     return '\n'.join(lines)

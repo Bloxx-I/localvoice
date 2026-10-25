@@ -26,11 +26,27 @@ class IntegrationTests(unittest.TestCase):
             result=import_recording(source,Path(folder)/'derived',channel='2')
             self.assertEqual(source.read_bytes(),before)
             self.assertEqual(result['source_sample_rate'],16000)
-            with wave.open(result['original'],'rb') as w:
-                self.assertEqual((w.getframerate(),w.getsampwidth(),w.getnchannels()),(48000,4,1))
-                actual=np.frombuffer(w.readframes(w.getnframes()),dtype='<i4')/2147483648
-            expected=soxr.resample(pcm[:,1].astype(np.float32)/2147483648,16000,48000)
-            self.assertGreater(np.corrcoef(actual,expected)[0,1],.99999)
+            import soundfile as sf, lecture
+            info=sf.info(result['clean'])
+            self.assertEqual((info.samplerate,info.channels,info.format,info.subtype),(48000,1,'FLAC','PCM_24'))
+            # The text track reads the untouched USB file, not a converted copy.
+            self.assertEqual(lecture.board_source(result['clean']).resolve(),source.resolve())
+
+    def test_identical_channels_are_stored_once(self):
+        for second, expect in ((lambda a: a+3, 1), (lambda a: a//2, 2)):
+            with tempfile.TemporaryDirectory() as folder:
+                path=Path(folder)/'native.wav'
+                info={'name':'Synthetic','default_samplerate':16000,'max_input_channels':2}
+                with patch('engine.sd.query_devices',return_value=info), patch('engine.sd.InputStream'):
+                    capture=Capture(InputSpec(0,'Synthetic'),path)
+                    left=np.arange(-50000,50000,7,dtype=np.int32)*1000
+                    data=np.column_stack((left,second(left))).astype(np.int32)
+                    capture.callback(data,len(data),None,None); capture.drain(); capture.close()
+                    capture.collapse_identical_channels()
+                with wave.open(str(path),'rb') as w:
+                    self.assertEqual(w.getnchannels(),expect)
+                    if expect==1:
+                        self.assertEqual(w.readframes(len(left)),left.astype('<i4').tobytes())
 
     def test_native_capture_saves_every_channel_before_selection(self):
         with tempfile.TemporaryDirectory() as folder:
