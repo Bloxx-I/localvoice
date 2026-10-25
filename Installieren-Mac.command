@@ -24,7 +24,7 @@ else
 fi
 if [[ ! -f models/qwen3-asr/.ready.json ]]; then
   print "==> Sprachmodell laden (einmalig, etwa 2,5 GB)"
-  .venv/bin/python src/download_model.py --console
+  PYTHONWARNINGS=ignore HF_HUB_DISABLE_PROGRESS_BARS=1 .venv/bin/python src/download_model.py --console
 fi
 if command -v swiftc >/dev/null; then
   print "==> App erstellen"

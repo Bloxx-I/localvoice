@@ -43,6 +43,9 @@ if (-not (Test-Path $Uv)) {
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $InstallDir 'python'
 $env:UV_CACHE_DIR = Join-Path $env:TEMP 'localvoice-uv-cache'
 $env:UV_LINK_MODE = 'copy'
+# Quiet console: library warnings and per-file download bars hide the real progress line.
+$env:PYTHONWARNINGS = 'ignore'
+$env:HF_HUB_DISABLE_PROGRESS_BARS = '1'
 
 Step "Python 3.12 und Umgebung einrichten"
 $Venv = Join-Path $InstallDir '.venv'
