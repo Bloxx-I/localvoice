@@ -66,6 +66,7 @@ if ($gpu) {
 
 Step "Pakete installieren"
 & $Uv pip install --python $Py -r (Join-Path $InstallDir 'requirements-windows.txt'); Check "Pakete"
+Step "Pakete pruefen (beim ersten Mal 1 bis 5 Minuten ohne Ausgabe - der Virenschutz scannt die neuen Dateien)"
 & $Py -c "import PySide6, sounddevice, soundfile, onnxruntime, qwen_asr, torch; print('Pakete ok - torch', torch.__version__, '- CUDA', torch.cuda.is_available())"; Check "Paketpruefung"
 
 if (-not $SkipModel) {
