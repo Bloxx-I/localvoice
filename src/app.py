@@ -156,7 +156,7 @@ class Studio(Window):
         self.folder = default_recordings()
         self.config_path = ROOT/'preferences.json'
         try:
-            self.preferences = json.loads(self.config_path.read_text())
+            self.preferences = json.loads(self.config_path.read_text(encoding='utf-8'))
             self.folder = Path(self.preferences.get('folder',str(self.folder)))
         except (OSError,ValueError): self.preferences = {}
 
@@ -705,7 +705,7 @@ class Studio(Window):
         self.preferences['expert'] = self.expert
         for name,box in self.auto_boxes.items():
             self.preferences.setdefault('inputs',{}).setdefault(name,{})['auto_gain'] = box.isChecked()
-        self.config_path.write_text(json.dumps(self.preferences, ensure_ascii=False, indent=2))
+        self.config_path.write_text(json.dumps(self.preferences, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def update_word_count(self):
         words = len(self.transcript.toPlainText().split())
@@ -831,7 +831,7 @@ class Studio(Window):
     def play_toggle(self):
         if self.last and self.player_loaded != self.last['clean']:
             try:
-                delay = json.loads(lecture.metadata_path(self.last['clean']).read_text()).get('model_delay_samples',480)
+                delay = json.loads(lecture.metadata_path(self.last['clean']).read_text(encoding='utf-8')).get('model_delay_samples',480)
             except (OSError,ValueError):
                 delay = 480
             try:
@@ -956,7 +956,7 @@ class Studio(Window):
         self.play_time.setText(self.format_time(self.waveform.position)+' / '+self.format_time(self.waveform.duration))
         if self.voxtral is None:
             try:
-                data = json.loads((ROOT/'models/download-status.json').read_text())
+                data = json.loads((ROOT/'models/download-status.json').read_text(encoding='utf-8'))
                 if data['state'] == 'downloading':
                     self.stt_status.setText(f'Modell-Download · {data.get("percent",0):.1f} % · Audio bleibt lokal')
                 elif data['state'] == 'ready' and not self.transcript.toPlainText():

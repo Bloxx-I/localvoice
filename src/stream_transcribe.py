@@ -33,7 +33,7 @@ def main():
                 target.write_text(text, encoding='utf-8')
                 target.with_suffix('.live.json').write_text(json.dumps({'segments':segments,
                     'local_only':True, 'mode':'incremental_audio_chunks',
-                    'note':'Abschnittsweise Transkription mit 0,5 s Überlappung; keine Wortzeitstempel.'}, ensure_ascii=False, indent=2))
+                    'note':'Abschnittsweise Transkription mit 0,5 s Überlappung; keine Wortzeitstempel.'}, ensure_ascii=False, indent=2), encoding='utf-8')
             emit(finished=True, text=text, path=str(target) if target else None)
             return
         path = Path(event['audio'])

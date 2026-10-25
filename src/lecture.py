@@ -201,7 +201,7 @@ def board_source(clean):
     """The unprocessed board recording behind a clean track (native > legacy original > clean)."""
     clean = Path(clean)
     try:
-        meta = json.loads(metadata_path(clean).read_text())
+        meta = json.loads(metadata_path(clean).read_text(encoding='utf-8'))
         for entry in meta.get('native_inputs', []):
             path = Path(entry['file'] if isinstance(entry, dict) else entry)
             if not path.is_absolute():

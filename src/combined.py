@@ -1,5 +1,8 @@
 """LocalVoice Studio and reSpeaker USB diagnostics in one coordinated app."""
 import json
+import os
+# Worker processes inherit this: UTF-8 for pipes and files on Windows too.
+os.environ['PYTHONUTF8'] = '1'
 import sys
 from pathlib import Path
 
@@ -130,10 +133,18 @@ class Combined(QMainWindow):
         box = self.studio.output_box
         self.output = QComboBox()
         self.output.setToolTip('Ausgang für Wiedergabe und Live-Abhören')
-        for d in audio_devices():
-            if d['max_output_channels']:
-                self.output.addItem(d['name'], d['index'])
-        self.output.setCurrentIndex(max(0, self.output.findData(sd.default.device[1])))
+        default = sd.default.device[1]
+        devices = [d for d in audio_devices() if d['max_output_channels']]
+        # Windows lists every device once per audio API; keep the default device's API only.
+        api = next((d.get('hostapi') for d in devices if d['index'] == default), None)
+        devices = [d for d in devices if api is None or d.get('hostapi') == api]
+        for d in devices:
+            self.output.addItem(d['name'], d['index'])
+        current = self.output.findData(default)
+        if 'respeaker' in self.output.itemText(current).lower():
+            # A new USB ReSpeaker often becomes the default output, usually without a speaker.
+            current = next((i for i in range(self.output.count()) if 'respeaker' not in self.output.itemText(i).lower()), current)
+        self.output.setCurrentIndex(max(0, current))
         self.output.currentIndexChanged.connect(self.change_output)
         box.addWidget(self.output)
         level = QHBoxLayout()
@@ -154,7 +165,6 @@ class Combined(QMainWindow):
         self.studio.player.close()
         self.studio.player.device = self.output.currentData()
         self.studio.monitor_device = self.output.currentData()
-        self.studio.listen.set_output(self.output.currentText())
 
     def busy(self):
         return bool(self.studio.recorder or self.studio.voxtral or self.studio.enhance_process or self.studio.live_stt or self.import_process)

@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer, Qt, QUrl
+from PySide6.QtCore import QEvent, QSettings, QTimer, Qt, QUrl
 from PySide6.QtGui import QColor, QTextCursor, QTextFormat
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
@@ -123,6 +123,14 @@ class ListenView(QWidget):
         self.mark_button.setToolTip('Stelle merken · Taste M')
         self.mark_button.clicked.connect(self.add_bookmark)
         controls.addWidget(self.mark_button)
+        self.output = QComboBox()
+        self.output.setToolTip('Wiedergabe über …')
+        self.output.setMaximumWidth(190)
+        self.output.currentIndexChanged.connect(self.output_changed)
+        controls.addWidget(self.output)
+        self.devices = QMediaDevices(self)
+        self.devices.audioOutputsChanged.connect(self.fill_outputs)
+        self.fill_outputs()
         layout.addWidget(bar)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
@@ -140,11 +148,36 @@ class ListenView(QWidget):
         self.skip_pauses.setVisible(on)
         self.mark_button.setVisible(on)
 
-    def set_output(self, name):
-        for device in QMediaDevices.audioOutputs():
-            if device.description() == name:
-                self.audio.setDevice(device)
-                return
+    def fill_outputs(self):
+        """Qt's own device list (names differ from sounddevice's on Windows).
+
+        A freshly plugged-in ReSpeaker often becomes the Windows default output,
+        usually without a speaker attached – then prefer another device.
+        """
+        outputs = QMediaDevices.audioOutputs()
+        default = QMediaDevices.defaultAudioOutput()
+        saved = QSettings('LocalVoice', 'LocalVoice').value('listen_output', '')
+        names = [d.description() for d in outputs]
+        if saved in names:
+            wanted = saved
+        elif 'respeaker' in default.description().lower():
+            wanted = next((n for n in names if 'respeaker' not in n.lower()), default.description())
+        else:
+            wanted = default.description()
+        self.output.blockSignals(True)
+        self.output.clear()
+        for device in outputs:
+            self.output.addItem(device.description(), device)
+        self.output.setCurrentIndex(max(0, self.output.findText(wanted)))
+        self.output.blockSignals(False)
+        self.output_changed(remember=False)
+
+    def output_changed(self, *_, remember=True):
+        device = self.output.currentData()
+        if device is not None:
+            self.audio.setDevice(device)
+            if remember:
+                QSettings('LocalVoice', 'LocalVoice').setValue('listen_output', device.description())
 
     def load(self, clean, title=''):
         self.save_position()
@@ -170,7 +203,7 @@ class ListenView(QWidget):
         self.segments = library.cues(self.clean, text, duration)
         self.starts = [a for a, _, _ in self.segments]
         try:
-            regions = json.loads(lecture.transcript_path(self.clean).read_text()).get('speech_regions', [])
+            regions = json.loads(lecture.transcript_path(self.clean).read_text(encoding='utf-8')).get('speech_regions', [])
             self.gaps = lecture.skip_map([tuple(r) for r in regions])
         except (OSError, ValueError):
             self.gaps = []
@@ -306,7 +339,7 @@ class ListenView(QWidget):
 
     def read_state(self):
         try:
-            return json.loads(lecture.listen_path(self.clean).read_text())
+            return json.loads(lecture.listen_path(self.clean).read_text(encoding='utf-8'))
         except (OSError, ValueError, TypeError):
             return {}
 
@@ -315,7 +348,7 @@ class ListenView(QWidget):
             return
         state = {**self.read_state(), 'bookmarks': self.bookmarks, **extra}
         try:
-            lecture.listen_path(self.clean).write_text(json.dumps(state, ensure_ascii=False, indent=2))
+            lecture.listen_path(self.clean).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError:
             pass
 

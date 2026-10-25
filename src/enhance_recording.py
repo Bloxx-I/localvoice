@@ -5,6 +5,11 @@ The source is never modified. Any rate/channel count; output is FLAC 24 bit, 48 
 import argparse
 import json
 import time
+import sys
+# Windows defaults to a legacy code page for pipes; the app reads UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8')
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +27,7 @@ def source_metadata(source):
         candidate = source.with_name(name)
         if candidate != source and candidate.exists():
             try:
-                return json.loads(candidate.read_text())
+                return json.loads(candidate.read_text(encoding='utf-8'))
             except (OSError, ValueError):
                 return {}
     return {}
@@ -79,7 +84,7 @@ def enhance(source, destination=None, attenuation=18, stem=None, channel=0):
             'local_only': True, 'sample_rate': RATE,
             # A legacy 48 kHz original points to its native file; otherwise the source is the board file.
             'native_inputs': inherited.get('native_inputs') or [{'file': str(source)}]}
-        (folder/(stem+'.json')).write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
+        (folder/(stem+'.json')).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
         return str(clean_path), str(source), metadata
     finally:
         model.close()

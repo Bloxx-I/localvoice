@@ -2,6 +2,11 @@
 import argparse
 import json
 from pathlib import Path
+import sys
+# Windows defaults to a legacy code page for pipes; the app reads UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8')
 
 import soundfile as sf
 from enhance_recording import enhance
@@ -19,7 +24,7 @@ def import_recording(source, destination, channel='1', attenuation=18):
     metadata.update(source_usb=str(source), source_sample_rate=info.samplerate,
                     source_channels=info.channels, source_format=info.subtype,
                     selected_usb_channel=channel)
-    Path(clean.replace('_clean.flac', '.json')).write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
+    Path(clean.replace('_clean.flac', '.json')).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
     return {'clean': clean, 'source': str(source), **metadata}
 
 

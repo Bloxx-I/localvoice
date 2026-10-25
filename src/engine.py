@@ -406,14 +406,14 @@ class Recorder:
                 'wet':self.wet, 'local_only':True,
                 'auto_gain': [s.auto_gain for s in self.specs],
                 'native_note':'Unveränderte Eingänge als native WAV; identische Kanäle nur einmal gespeichert.'}
-            metadata_target.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
+            metadata_target.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
             self.result = {'clean': str(target) if enhancer else None,
                            'source': str(captures[0].native_path), 'metadata': str(metadata_target), **metadata}
         except BaseException as exc:
             self.error = str(exc)
             if metadata_target:
                 metadata_target.write_text(json.dumps({'error':self.error,
-                    'native_inputs':[str(c.native_path) for c in captures], 'local_only':True}, indent=2))
+                    'native_inputs':[str(c.native_path) for c in captures], 'local_only':True}, indent=2), encoding='utf-8')
         finally:
             for capture in captures:
                 try:

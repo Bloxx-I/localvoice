@@ -3,6 +3,10 @@ import argparse
 import json
 import os
 import sys
+# Windows defaults to a legacy code page for pipes; the app reads UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8')
 
 # The app launcher runs offline; this one-time download is the only online step.
 for key in ('HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE'):
@@ -19,7 +23,7 @@ CONSOLE = False
 
 def status(**data):
     DOWNLOAD_STATUS.parent.mkdir(parents=True, exist_ok=True)
-    DOWNLOAD_STATUS.write_text(json.dumps(data, ensure_ascii=False))
+    DOWNLOAD_STATUS.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
     if CONSOLE:
         text = {'downloading': f"Sprachmodell {data.get('repo', '')}: {data.get('percent', 0):5.1f} %",
                 'ready': 'Sprachmodell bereit.', 'error': 'Fehler: '+data.get('message', '')}[data['state']]
@@ -36,7 +40,7 @@ def download(repo=None, target=ASR_MODEL):
     from huggingface_hub import HfApi, snapshot_download
     target = Path(target)
     if (target/'.ready.json').exists():
-        status(state='ready', percent=100., repo=json.loads((target/'.ready.json').read_text()).get('repo'))
+        status(state='ready', percent=100., repo=json.loads((target/'.ready.json').read_text(encoding='utf-8')).get('repo'))
         return
     repo = repo or default_repo()
     info = HfApi().model_info(repo, files_metadata=True)
@@ -59,7 +63,7 @@ def download(repo=None, target=ASR_MODEL):
         raise
     done.set()
     (target/'.ready.json').write_text(json.dumps({'repo': repo, 'revision': info.sha,
-        'bytes': total, 'downloaded': time.strftime('%Y-%m-%d %H:%M')}, indent=2))
+        'bytes': total, 'downloaded': time.strftime('%Y-%m-%d %H:%M')}, indent=2), encoding='utf-8')
     status(state='ready', percent=100., repo=repo)
 
 

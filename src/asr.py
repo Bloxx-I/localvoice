@@ -53,7 +53,7 @@ class ASR:
 
     def describe(self):
         try:
-            repo = json.loads((self.model_dir/'.ready.json').read_text()).get('repo', 'Qwen3-ASR')
+            repo = json.loads((self.model_dir/'.ready.json').read_text(encoding='utf-8')).get('repo', 'Qwen3-ASR')
         except (OSError, ValueError):
             repo = 'Qwen3-ASR'
         return f'{repo.split("/")[-1]} · {self.device}'

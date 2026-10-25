@@ -31,7 +31,7 @@ class Window(QMainWindow):
         self.folder = ROOT / 'Aufnahmen'
         self.config_path = ROOT / 'preferences.json'
         try:
-            self.preferences = json.loads(self.config_path.read_text())
+            self.preferences = json.loads(self.config_path.read_text(encoding='utf-8'))
             self.folder = Path(self.preferences.get('folder', str(self.folder)))
         except (OSError, ValueError):
             self.preferences = {}
@@ -239,7 +239,7 @@ class Window(QMainWindow):
         data = {'folder': str(self.folder), 'inputs': {name: {'active': active.isChecked(),
             'channel': channel.value(), 'gain_db': gain.value(), 'delay_ms': delay.value()}
             for _, name, active, channel, gain, delay, _ in self.rows}}
-        self.config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        self.config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         self.preferences = data
 
     def record_toggle(self):
@@ -272,7 +272,7 @@ class Window(QMainWindow):
         delay = 480
         try:
             metadata = Path(str(clean).replace('_clean.wav','.json'))
-            delay = json.loads(metadata.read_text()).get('model_delay_samples',480)
+            delay = json.loads(metadata.read_text(encoding='utf-8')).get('model_delay_samples',480)
         except (OSError,ValueError):
             pass
         self.player.load(clean, original, delay_samples=delay)

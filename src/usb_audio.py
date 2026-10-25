@@ -164,7 +164,7 @@ class Capture:
                         'stream_warnings_session': sorted(self.warnings.copy()), 'writer_error': self.failure,
                         'processing': 'USB-Signal unverändert gespeichert; Board-DSP gemäß Firmware. Keine Softwarefilter.',
                         'channel_mapping': 'USB-Kanäle; nicht als einzelne rohe Mikrofone identifiziert.'}
-            self.path.with_suffix('.json').write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
+            self.path.with_suffix('.json').write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding='utf-8')
             return self.path
 
     def snapshot(self):

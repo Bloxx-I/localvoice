@@ -16,7 +16,7 @@ def metadata_path(clean):
 
 def duration_of(clean):
     try:
-        return float(json.loads(metadata_path(clean).read_text())['duration_seconds'])
+        return float(json.loads(metadata_path(clean).read_text(encoding='utf-8'))['duration_seconds'])
     except (OSError, ValueError, KeyError, TypeError):
         pass
     try:
@@ -69,11 +69,11 @@ def cues(clean, text='', duration=0.):
     try:
         if deferred.exists():
             result = [(s['start'], s['end'], s['text'].strip())
-                      for s in json.loads(deferred.read_text())['segments'] if s['text'].strip()]
+                      for s in json.loads(deferred.read_text(encoding='utf-8'))['segments'] if s['text'].strip()]
             if result: return result
         if live.exists():
             result, joined = [], ''
-            for s in json.loads(live.read_text())['segments']:
+            for s in json.loads(live.read_text(encoding='utf-8'))['segments']:
                 # Live chunks overlap by 0.5 s; keep only the words each chunk adds.
                 combined = append_text(joined, s['text'])
                 added = combined[len(joined):].strip()

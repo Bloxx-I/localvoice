@@ -6,6 +6,10 @@ import socket
 import sys
 import time
 from pathlib import Path
+# Windows defaults to a legacy code page for pipes; the app reads UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8')
 
 for key,value in {'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1',
                   'HF_HUB_DISABLE_TELEMETRY':'1','TOKENIZERS_PARALLELISM':'false'}.items():
@@ -66,7 +70,7 @@ def main():
         if args.source == 'board' else 'verbesserte Hörspur','duration_seconds':duration,
         'segments':segments,'speech_regions':[[round(a,2),round(b,2)] for a,b in regions],
         'elapsed_seconds':time.monotonic()-started,'local_only':True,'segment_times_are_not_word_timestamps':True}
-    lecture.transcript_path(clean).write_text(json.dumps(metadata,ensure_ascii=False,indent=2))
+    lecture.transcript_path(clean).write_text(json.dumps(metadata,ensure_ascii=False,indent=2), encoding='utf-8')
     emit(status=f'Transkript gespeichert · {target.name}',text=joined,segments=segments,path=str(target),progress=1.)
 
 
