@@ -1,0 +1,21 @@
+# Personal data: recordings, transcripts, logs, settings – never commit.
+Aufnahmen/
+Pruefaufnahmen/
+recordings/
+Logs/
+preferences.json
+diagnose.json
+hardware-validation.json
+import-result.json
+streaming-validation.json
+# Runtime and models (downloaded/linked locally)
+.venv
+.venv/
+models/qwen3-asr*
+models/download-status.json
+.build-cache/
+__pycache__/
+*.pyc
+.DS_Store
+dist/
+build/
