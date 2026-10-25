@@ -253,7 +253,9 @@ class Studio(Window):
         self.server_auto.setToolTip('Statt lokal: Text mit Qwen3-ASR 1.7B auf der GPU des Heimservers.')
         self.server_test = QPushButton('Verbindung testen')
         self.server_test.clicked.connect(self.test_server)
-        for widget in (self.server_url, self.server_token, self.server_auto, self.server_test):
+        self.update_check_button = QPushButton('Nach Updates suchen')
+        self.update_check_button.setToolTip('Neue LocalVoice-Versionen kommen über deinen Server.')
+        for widget in (self.server_url, self.server_token, self.server_auto, self.server_test, self.update_check_button):
             svl.addWidget(widget)
         side.addWidget(server)
 
@@ -346,6 +348,7 @@ class Studio(Window):
         center.setSpacing(14)
         self.views.addWidget(record_page)
         self.listen = ListenView()
+        self.listen.rename_button.clicked.connect(lambda:self.rename_recording())
         self.views.addWidget(self.listen)
         workspace.addWidget(center_panel,1)
         recording = card('heroCard')
@@ -538,10 +541,37 @@ class Studio(Window):
         self.library_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.library_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.library_list.itemClicked.connect(self.open_library_item)
+        self.library_list.itemDoubleClicked.connect(lambda item:self.rename_recording(item.data(Qt.ItemDataRole.UserRole)['clean']))
+        self.library_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.library_list.customContextMenuRequested.connect(self.library_menu)
         layout.addWidget(self.library_list,1)
         self.library_count = label('','muted')
         layout.addWidget(self.library_count)
         return page
+
+    def library_menu(self, position):
+        item = self.library_list.itemAt(position)
+        if not item: return
+        clean = item.data(Qt.ItemDataRole.UserRole)['clean']
+        menu = QMenu(self)
+        menu.addAction('Umbenennen …', lambda:self.rename_recording(clean))
+        menu.addAction(f'Im {FILE_BROWSER} zeigen', lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(clean).parent))))
+        menu.exec(self.library_list.viewport().mapToGlobal(position))
+
+    def rename_recording(self, clean=None):
+        clean = clean or (self.last and self.last['clean'])
+        if not clean: return
+        name, ok = QInputDialog.getText(self, 'Aufnahme benennen', 'Name (leer = Datum):',
+                                        text=library.custom_title(clean))
+        if not ok: return
+        try:
+            library.set_title(clean, name)
+        except OSError as e:
+            self.status.setText(f'Umbenennen nicht möglich: {e}')
+            return
+        if self.last and self.last['clean'] == clean:
+            self.listen.title.setText(library.title_of(clean))
+        self.refresh_library()
 
     def show_side_page(self, index):
         self.side_pages.setCurrentIndex(index)
@@ -556,14 +586,16 @@ class Studio(Window):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, entry)
             when = entry['created'].strftime('%d.%m.%Y · %H:%M')
-            item.setData(Qt.ItemDataRole.UserRole+1, (when+' '+entry['variant']+' '+entry['text']).casefold())
+            item.setData(Qt.ItemDataRole.UserRole+1, (entry['name']+' '+when+' '+entry['variant']+' '+entry['text']).casefold())
             widget = QWidget()
             widget.setObjectName('libraryRow')
             box = QVBoxLayout(widget)
             box.setContentsMargins(10,8,10,8)
             box.setSpacing(3)
             top = QHBoxLayout()
-            top.addWidget(label(when,'libraryTitle'))
+            title = label(entry['name'] or when,'libraryTitle')
+            title.setWordWrap(True)
+            top.addWidget(title,1)
             top.addStretch()
             seconds = int(entry['duration'])
             top.addWidget(label(f'{seconds//60}:{seconds%60:02}','time'))
@@ -572,8 +604,9 @@ class Studio(Window):
             text = label((preview[:72].rstrip()+' …' if len(preview) > 72 else preview) or 'Noch kein Transkript','libraryText' if preview else 'muted')
             text.setWordWrap(True)
             box.addWidget(text)
-            if entry['variant']:
-                box.addWidget(label(entry['variant'],'libraryTag'))
+            tags = ' · '.join(t for t in (when if entry['name'] else '', entry['variant']) if t)
+            if tags:
+                box.addWidget(label(tags,'libraryTag'))
             width = self.library_list.viewport().width() or 280
             item.setSizeHint(QSize(width, box.totalHeightForWidth(width-24)+8))
             self.library_list.addItem(item)

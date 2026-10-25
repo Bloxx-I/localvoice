@@ -45,11 +45,34 @@ def scan(folder):
         entries.append({'clean': str(clean), 'original': str(original) if original.exists() else None,
             'created': created or datetime.fromtimestamp(clean.stat().st_mtime),
             'variant': (match.group(3) if match else '').replace('_', ' '),
-            'duration': duration_of(clean), 'text': text})
+            'duration': duration_of(clean), 'text': text, 'name': custom_title(clean)})
     return sorted(entries, key=lambda e: e['created'], reverse=True)
 
 
-def title_of(clean):
+def custom_title(clean):
+    """The name the user gave this recording (kept in <stem>.listen.json), or ''."""
+    try:
+        return str(json.loads(lecture.listen_path(clean).read_text(encoding='utf-8')).get('title', '')).strip()
+    except (OSError, ValueError):
+        return ''
+
+
+def set_title(clean, title):
+    """Rename a recording without touching its audio or text files."""
+    path = lecture.listen_path(clean)
+    try:
+        state = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        state = {}
+    title = title.strip()
+    if title:
+        state['title'] = title
+    else:
+        state.pop('title', None)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def date_title(clean):
     """'25.10.2026 · 22:27' for LocalVoice names, else the plain stem."""
     stem = lecture.stem_of(clean).removeprefix('LocalVoice_')
     match = STAMP.match(stem)
@@ -59,6 +82,10 @@ def title_of(clean):
         return when.strftime('%d.%m.%Y · %H:%M') + (f' · {variant}' if variant else '')
     except (AttributeError, ValueError):
         return stem.replace('_', ' ')
+
+
+def title_of(clean):
+    return custom_title(clean) or date_title(clean)
 
 
 def cues(clean, text='', duration=0.):
@@ -102,8 +129,7 @@ def to_vtt(items):
 
 
 def to_markdown(clean, text, items, duration=0., bookmarks=()):
-    entry = lecture.stem_of(clean).removeprefix('LocalVoice_')
-    lines = [f'# Transkript · {entry}', '',
+    lines = [f'# {title_of(clean)}', '',
              f'- Datei: `{Path(clean).name}`',
              f'- Dauer: {int(duration)//60}:{int(duration)%60:02}',
              '- Lokal transkribiert mit Qwen3-ASR', '']

@@ -47,6 +47,19 @@ class LibraryTests(unittest.TestCase):
         md = library.to_markdown('LocalVoice_x_clean.flac', 'Text', [], 75, [{'t': 65, 'note': 'klausurrelevant'}])
         self.assertIn('**1:05** klausurrelevant', md)
 
+    def test_rename_keeps_files_and_shows_everywhere(self):
+        with tempfile.TemporaryDirectory() as folder:
+            clean = Path(folder)/'LocalVoice_2026-10-27_08-15-00_1_clean.flac'
+            clean.write_bytes(b'')
+            self.assertEqual(library.title_of(clean), '27.10.2026 · 08:15')
+            library.set_title(clean, '  Thermodynamik VL 3  ')
+            self.assertEqual(library.title_of(clean), 'Thermodynamik VL 3')
+            self.assertEqual(library.scan(folder)[0]['name'], 'Thermodynamik VL 3')
+            self.assertTrue(library.to_markdown(clean, 'x', []).startswith('# Thermodynamik VL 3'))
+            self.assertTrue(clean.exists())
+            library.set_title(clean, '')
+            self.assertEqual(library.title_of(clean), '27.10.2026 · 08:15')
+
     def test_fallback_single_cue(self):
         self.assertEqual(library.cues('/nope_clean.wav', 'Text', 3.), [(0., 3., 'Text')])
 

@@ -82,6 +82,11 @@ class Combined(QMainWindow):
             mode_row.addWidget(button)
         self.mode_group.idClicked.connect(lambda index: self.set_expert(index == 1))
         action_row.addWidget(mode)
+        self.update_button = QPushButton('⬆  Update installieren')
+        self.update_button.setObjectName('primary')
+        self.update_button.hide()
+        self.update_button.clicked.connect(self.install_update)
+        action_row.addWidget(self.update_button)
         self.import_button = QPushButton('USB-WAV importieren …')
         self.import_button.setToolTip('Eine gespeicherte USB-Aufnahme im Studio verbessern. Die WAV bleibt unverändert.')
         self.import_button.clicked.connect(self.choose_usb)
@@ -117,6 +122,59 @@ class Combined(QMainWindow):
         ready = ROOT/'models/qwen3-asr/.ready.json'
         self.studio.stt_status.setText('Qwen3-ASR · lokales Modell bereit' if ready.exists() else 'Für Text einmalig „Sprachmodell laden“ wählen.')
         self.set_expert(self.studio.expert)
+        self.studio.update_check_button.clicked.connect(lambda: self.check_update(manual=True))
+        QTimer.singleShot(4000, self.check_update)
+
+    # --- updates via the home server ---------------------------------------------
+
+    def check_update(self, manual=False):
+        if not self.studio.server_ready(ask=manual):
+            return
+        process = QProcess(self)
+        def done(code, status):
+            out = bytes(process.readAllStandardOutput()).decode('utf-8', 'replace').strip()
+            err = bytes(process.readAllStandardError()).decode('utf-8', 'replace').strip()
+            process.deleteLater()
+            try:
+                info = json.loads(out.splitlines()[-1])
+            except (IndexError, ValueError):
+                if manual:
+                    self.statusBar().showMessage('Update-Prüfung: '+(err.splitlines() or ['keine Antwort'])[-1], 8000)
+                return
+            latest = info['latest']
+            when = latest.get('date', '')[:16].replace('T', ' ')
+            if info['dev']:
+                if manual:
+                    self.statusBar().showMessage(f"Entwicklungsordner (git) – neueste Version {latest['commit']} mit „git pull“ holen.", 8000)
+            elif info['available']:
+                self.update_info = latest
+                self.update_button.setToolTip(f"Neu: {latest.get('subject', '')}\nStand {when} · {latest['commit']}")
+                self.update_button.show()
+            elif manual:
+                self.statusBar().showMessage(f"LocalVoice ist aktuell ({latest['commit']}, {when}).", 8000)
+        process.finished.connect(done)
+        process.start(sys.executable, ['-u', str(ROOT/'src'/'updater.py'), '--check',
+            '--url', self.studio.server_url.text().strip(), '--token', self.studio.server_token.text().strip()])
+
+    def install_update(self):
+        if self.busy() or self.usb.capture.recording:
+            self.statusBar().showMessage('Bitte laufende Aufnahme oder Verarbeitung zuerst beenden.', 6000)
+            return
+        info = getattr(self, 'update_info', {})
+        answer = QMessageBox.question(self, 'Update installieren',
+            f"Neue Version: {info.get('subject', '')}\n\nLocalVoice schließt sich kurz, installiert das Update und "
+            'startet neu (etwa eine Minute). Aufnahmen, Sprachmodell und Einstellungen bleiben erhalten.')
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.studio.save_preferences()
+        ok = QProcess.startDetached(sys.executable, ['-u', str(ROOT/'src'/'updater.py'), '--install',
+            '--url', self.studio.server_url.text().strip(), '--token', self.studio.server_token.text().strip(),
+            '--pid', str(os.getpid())], str(ROOT))
+        ok = ok[0] if isinstance(ok, tuple) else ok
+        if not ok:
+            self.statusBar().showMessage('Update konnte nicht gestartet werden.', 8000)
+            return
+        self.close()
 
     def set_expert(self, on):
         if not on and self.tabs.currentIndex() != 0:

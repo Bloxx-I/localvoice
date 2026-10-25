@@ -39,6 +39,17 @@ Aufnahme, Filterstärke und „Neu verbessern“, Textquelle, **Thema/Fachbegrif
 **Pausen überspringen**, **Merker** (Taste M), A/B-Vergleich mit dem Original (Taste O halten) und den
 Reiter **reSpeaker · USB-Test**.
 
+## Updates
+
+LocalVoice prüft beim Start über den Heimserver, ob es eine neue Version gibt, und zeigt dann oben
+**„⬆ Update installieren“**. Ein Klick lädt sie, LocalVoice schließt sich kurz und startet aktualisiert neu.
+Ersetzt werden nur Programmdateien – Aufnahmen, Sprachmodell, Einstellungen und Python-Umgebung bleiben.
+Protokoll: `Logs/update.log`. Neue Versionen veröffentlichen: `zsh release.sh` (Push zu GitHub + Bereitstellung
+auf dem Server; das Repo ist privat, daher kommen Updates über den Server).
+
+Aufnahmen benennen: in der Liste doppelklicken oder Rechtsklick → „Umbenennen …“, beim Nachhören „✎ Umbenennen“.
+Die Dateien behalten ihre Namen; der Name gilt für Liste, Suche, Nachhören und Export.
+
 ## Auf dem Heimserver transkribieren
 
 **„Auf Server verarbeiten“** (auch im Einfach-Modus) schickt die vorbereitete Textspur an den eigenen Server und
