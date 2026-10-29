@@ -377,9 +377,10 @@ class Studio(Window):
         self.level_hint = label('','levelHint')
         text.addWidget(self.level_hint)
         controls.addLayout(text,1)
-        self.listen_button = QPushButton('▶  Nachhören')
+        self.listen_button = QPushButton('▶  Anhören')
         self.listen_button.setObjectName('primary')
-        self.listen_button.clicked.connect(lambda:self.show_view(1))
+        self.listen_button.setToolTip('Verbesserte Aufnahme abspielen')
+        self.listen_button.clicked.connect(self.hear)
         self.listen_button.hide()
         controls.addWidget(self.listen_button)
         self.timer_label = label('00:00.0','clock')
@@ -398,6 +399,18 @@ class Studio(Window):
         self.waveform = Waveform()
         self.waveform.seekRequested.connect(self.player.seek)
         rl.addWidget(self.waveform,1)
+        self.simple_bar = QWidget()
+        self.simple_bar.setObjectName('clear')
+        simple_row = QHBoxLayout(self.simple_bar)
+        simple_row.setContentsMargins(0,0,0,0)
+        self.simple_hear = QPushButton('▶  Anhören')
+        self.simple_hear.setObjectName('play')
+        self.simple_hear.setToolTip('Verbesserte Aufnahme abspielen')
+        self.simple_hear.clicked.connect(self.hear)
+        self.simple_hear.setEnabled(False)
+        simple_row.addWidget(self.simple_hear)
+        simple_row.addStretch()
+        rl.addWidget(self.simple_bar)
         self.compare_panel = QWidget()
         self.compare_panel.setObjectName('clear')
         compare = QVBoxLayout(self.compare_panel)
@@ -688,12 +701,23 @@ class Studio(Window):
             self.side_pages.setCurrentIndex(1)
             self.refresh_library()
         self.compare_panel.setVisible(on)
+        self.simple_bar.setVisible(not on)
+        self.listen_button.setText('▶  Nachhören' if on else '▶  Anhören')
         self.stream_panel.setVisible(on)
         self.listen.set_expert(on)
         if not on:
             self.player.close()
             self.set_original(False)
         self.preferences['expert'] = on
+
+    def hear(self):
+        """Simple mode: the Qt player, which already plays files libsndfile cannot seek."""
+        if not self.last:
+            return
+        self.show_view(1)
+        from PySide6.QtMultimedia import QMediaPlayer
+        if self.listen.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            self.listen.toggle()
 
     def show_view(self, index):
         self.view_group.button(index).setChecked(True)
@@ -998,6 +1022,7 @@ class Studio(Window):
             self.show_transcript_source(clean)
         self.listen.load(clean, library.title_of(clean))
         self.listen_button.show()
+        self.simple_hear.setEnabled(True)
         if hasattr(self,'library_list'): QTimer.singleShot(0,self.refresh_library)
 
     def play_toggle(self):

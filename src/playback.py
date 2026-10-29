@@ -1,6 +1,7 @@
 """One playback clock for clean and original. Switching never seeks."""
 import threading
 import wave
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -23,10 +24,22 @@ class ComparisonPlayer:
 
     @staticmethod
     def read(path, rate=None):
+        """Whole file, one channel. Qt first: the same FFmpeg Nachhören already plays.
+
+        libsndfile raises ``Internal psf_fseek() failed`` on these FLAC and PCM32
+        files under Windows, including while only reading forward.
+        """
         import lecture
-        import soundfile as sf
-        native = sf.info(str(path)).samplerate
-        return lecture.read_mono(path, rate or native), rate or native
+        try:
+            audio, native = _qt_mono(path)
+        except Exception:
+            import soundfile as sf
+            native = sf.info(str(path)).samplerate
+            audio = lecture.read_mono(path, native)
+        if rate and int(rate) != int(native) and len(audio):
+            audio = soxr.resample(audio, int(native), int(rate)).astype(np.float32)
+            native = int(rate)
+        return audio, int(native)
 
     def load(self, clean, raw=None, delay_samples=480):
         """raw=None: the original is derived from the board recording behind clean."""
@@ -114,3 +127,61 @@ class ComparisonPlayer:
         if self.stream:
             self.stream.close()
             self.stream = None
+
+
+def _mono_from_buffer(buf, channel=0):
+    from PySide6.QtMultimedia import QAudioFormat
+    fmt = buf.format()
+    channels = max(1, fmt.channelCount())
+    frames = int(buf.frameCount())
+    kind = fmt.sampleFormat()
+    Sample = QAudioFormat.SampleFormat
+    raw = bytes(buf.constData()[:buf.byteCount()])
+    if kind == Sample.Float:
+        data = np.frombuffer(raw, dtype='<f4')
+    elif kind == Sample.Int32:
+        data = np.frombuffer(raw, dtype='<i4').astype(np.float32) / np.float32(2147483648.0)
+    elif kind == Sample.Int16:
+        data = np.frombuffer(raw, dtype='<i2').astype(np.float32) / np.float32(32768.0)
+    elif kind == Sample.UInt8:
+        data = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - np.float32(128)) / np.float32(128)
+    else:
+        raise RuntimeError('Unbekanntes Audiodatenformat.')
+    data = np.reshape(data[:frames * channels], (frames, channels))
+    return np.ascontiguousarray(data[:, min(channel, channels - 1)], dtype=np.float32), int(fmt.sampleRate())
+
+
+def _qt_mono(path, channel=0):
+    """Decode one channel with Qt's FFmpeg backend. Needs a running QApplication."""
+    from PySide6.QtCore import QCoreApplication, QEventLoop, QUrl
+    from PySide6.QtMultimedia import QAudioDecoder
+    if QCoreApplication.instance() is None:
+        raise RuntimeError('Qt läuft nicht.')
+    decoder = QAudioDecoder()
+    if not decoder.isSupported():
+        raise RuntimeError('Qt kann diese Datei nicht lesen.')
+    decoder.setSource(QUrl.fromLocalFile(str(Path(path).resolve())))
+    parts, failed, rate = [], [], None
+    loop = QEventLoop()
+
+    def take():
+        nonlocal rate
+        buf = decoder.read()
+        if buf is None or not buf.isValid() or not buf.frameCount():
+            return
+        samples, rate = _mono_from_buffer(buf, channel)
+        parts.append(samples)
+
+    decoder.bufferReady.connect(take)
+    decoder.finished.connect(loop.quit)
+    decoder.error.connect(lambda *_: failed.append(decoder.errorString() or 'Dekoderfehler') or loop.quit())
+    decoder.start()
+    if not decoder.isDecoding() and (failed or decoder.errorString()):
+        raise RuntimeError(failed[-1] if failed else decoder.errorString())
+    loop.exec()
+    decoder.deleteLater()
+    if failed and not parts:
+        raise RuntimeError(failed[-1])
+    if not parts or rate is None:
+        raise RuntimeError('Keine Audiodaten.')
+    return np.concatenate(parts), rate

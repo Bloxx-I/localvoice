@@ -28,4 +28,18 @@ class UIRegression(unittest.TestCase):
         self.assertTrue(w.studio.pipeline_mode.isEnabled())
         w.close()
 
+    def test_simple_mode_shows_hear_button(self):
+        w = Combined()
+        w.timer.stop(); w.studio.timer.stop(); w.usb.timer.stop()
+        w.show()
+        w.studio.set_expert(False)
+        self.assertFalse(w.studio.simple_bar.isHidden())
+        self.assertTrue(w.studio.compare_panel.isHidden())
+        self.assertEqual(w.studio.listen_button.text(), '▶  Anhören')
+        w.studio.set_expert(True)
+        self.assertTrue(w.studio.simple_bar.isHidden())
+        self.assertFalse(w.studio.compare_panel.isHidden())
+        self.assertEqual(w.studio.listen_button.text(), '▶  Nachhören')
+        w.close()
+
 if __name__=='__main__': unittest.main()

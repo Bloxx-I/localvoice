@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -96,6 +97,31 @@ class AudioTests(unittest.TestCase):
             self.assertEqual(len(player.clean), 1000)
             self.assertEqual(len(player.raw), len(player.clean))
             self.assertIn('verbesserte Aufnahme', player.error)
+
+    def test_playback_reads_when_libsndfile_seek_fails(self):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import soundfile as sf
+        sine = (0.4*np.sin(np.linspace(0, 40*np.pi, 24000))).astype(np.float32)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'clean.wav'
+            with wave.open(str(path), 'wb') as writer:
+                writer.setparams((1, 4, 48000, 0, 'NONE', 'not compressed'))
+                writer.writeframes(pcm(sine))
+            real_seek, real_info = sf.SoundFile.seek, sf.info
+
+            def broken(*_a, **_k):
+                raise RuntimeError('Internal psf_fseek() failed.')
+
+            sf.SoundFile.seek = broken
+            sf.info = broken
+            try:
+                audio, rate = ComparisonPlayer.read(path)
+            finally:
+                sf.SoundFile.seek, sf.info = real_seek, real_info
+        self.assertEqual(rate, 48000)
+        self.assertGreater(np.corrcoef(audio[:len(sine)], sine)[0, 1], .99)
 
 
 if __name__ == '__main__': unittest.main()
