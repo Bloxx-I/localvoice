@@ -85,5 +85,17 @@ class AudioTests(unittest.TestCase):
             self.assertEqual(len(player.clean),len(player.raw))
             self.assertTrue(np.all(player.raw[:480] == 0))
 
+    def test_play_starts_when_original_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clean = Path(directory)/'clean.wav'
+            with wave.open(str(clean),'wb') as w:
+                w.setparams((1,4,48000,0,'NONE','not compressed'))
+                w.writeframes(pcm(np.full(1000,.2,np.float32)))
+            player = ComparisonPlayer()
+            player.load(clean, Path(directory)/'missing.wav')
+            self.assertEqual(len(player.clean), 1000)
+            self.assertEqual(len(player.raw), len(player.clean))
+            self.assertIn('verbesserte Aufnahme', player.error)
+
 
 if __name__ == '__main__': unittest.main()

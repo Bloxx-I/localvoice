@@ -36,22 +36,30 @@ class ComparisonPlayer:
         derived = raw is None
         if derived:
             raw = lecture.board_source(clean)
-        self.raw, rate = self.read(raw, self.rate)
+        fallback = None
+        try:
+            self.raw, rate = self.read(raw, self.rate)
+        except Exception as exc:
+            # Abspielen must play the improved track even if the original cannot be read.
+            fallback = str(exc)
+            self.raw = np.copy(self.clean)
+            derived = False
         if derived:
             # Same automatic level as the listening track, so A/B compares sound, not loudness.
             self.raw = lecture.prepare_text_track(self.raw, self.rate)
-        # Match the causal STFT delay in this low-lookahead model (960 FFT,
-        # 480 hop, no network lookahead). Verify this in the signal test.
-        self.raw = np.pad(self.raw, (delay_samples, 0))[:len(self.clean)]
-        if len(self.raw) < len(self.clean):
-            self.raw = np.pad(self.raw, (0, len(self.clean)-len(self.raw)))
+        if fallback is None:
+            # Match the causal STFT delay in this low-lookahead model (960 FFT,
+            # 480 hop, no network lookahead). Verify this in the signal test.
+            self.raw = np.pad(self.raw, (delay_samples, 0))[:len(self.clean)]
+            if len(self.raw) < len(self.clean):
+                self.raw = np.pad(self.raw, (0, len(self.clean)-len(self.raw)))
         self._source_clean = self.clean
         self._source_raw = self.raw
         self._source_rate = self.rate
         self.position = 0
         self.original = False
         self.blend = 0.
-        self.error = None
+        self.error = ('Original nicht vergleichbar (' + fallback + '). Es läuft die verbesserte Aufnahme.') if fallback else None
 
     def callback(self, out, frames, timing, status):
         out[:] = 0

@@ -217,14 +217,50 @@ def board_source(clean):
     return clean
 
 
+class PcmFile:
+    """Sequential reader. soundfile seeks after every read so the write cursor stays put.
+
+    That seek raises ``Internal psf_fseek() failed`` on the FLAC Hörspur (libsndfile /
+    libFLAC). Abspielen died on it; Nachhören kept working because Qt never seeks.
+    Reads here only go forward.
+    """
+
+    def __init__(self, path):
+        import soundfile as sf
+        self._f = sf.SoundFile(str(path))
+        self._f._info.seekable = 0
+        self.samplerate = int(self._f.samplerate)
+        self.channels = int(self._f.channels)
+        self.frames = int(self._f.frames)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def close(self):
+        self._f.close()
+
+    def blocks(self, blocksize=1 << 16, dtype='float32'):
+        left = self.frames
+        while left > 0:
+            block = self._f.read(min(int(blocksize), left), dtype=dtype, always_2d=True)
+            got = int(len(block))
+            if got <= 0:
+                break
+            left -= got
+            yield block
+
+
 def read_mono(path, rate=ASR_RATE, channel=0):
     """Whole file, one channel, resampled. Memory: ~4 bytes/sample at the target rate."""
-    import soundfile as sf
     import soxr
-    with sf.SoundFile(str(path)) as f:
+    with PcmFile(path) as src:
         parts = []
-        resampler = None if f.samplerate == rate else soxr.ResampleStream(f.samplerate, rate, 1, dtype='float32', quality='HQ')
-        for block in f.blocks(blocksize=1 << 16, dtype='float32', always_2d=True):
+        resampler = None if src.samplerate == rate else soxr.ResampleStream(src.samplerate, rate, 1, dtype='float32', quality='HQ')
+        for block in src.blocks(dtype='float32'):
             x = np.ascontiguousarray(block[:, min(channel, block.shape[1]-1)])
             parts.append(resampler.resample_chunk(x) if resampler else x)
         if resampler:
@@ -234,13 +270,12 @@ def read_mono(path, rate=ASR_RATE, channel=0):
 
 def envelope_file(path, bins=650, channel=0):
     """Peak envelope of a whole file without loading it into memory."""
-    import soundfile as sf
     out = np.zeros(bins)
     try:
-        with sf.SoundFile(str(path)) as f:
-            total = max(1, f.frames)
+        with PcmFile(path) as src:
+            total = max(1, src.frames)
             position = 0
-            for block in f.blocks(blocksize=1 << 16, dtype='float32', always_2d=True):
+            for block in src.blocks(dtype='float32'):
                 x = np.abs(block[:, min(channel, block.shape[1]-1)])
                 index = ((position+np.arange(len(x)))*bins//total).clip(0, bins-1)
                 np.maximum.at(out, index, x)

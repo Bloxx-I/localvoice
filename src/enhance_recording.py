@@ -17,6 +17,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 from engine import Enhancer, FRAME, RATE
+from lecture import PcmFile
 
 
 PROFILES = {18: 'Natürlich', 30: 'Ausgewogen', 45: 'Mehr_Ruhe'}
@@ -46,7 +47,7 @@ def enhance(source, destination=None, attenuation=18, stem=None, channel=0):
     started = time.perf_counter()
     samples = 0
     try:
-        with sf.SoundFile(str(source)) as src, sf.SoundFile(str(clean_path), 'w', samplerate=RATE,
+        with PcmFile(source) as src, sf.SoundFile(str(clean_path), 'w', samplerate=RATE,
                 channels=1, subtype='PCM_24', format='FLAC') as clean:
             if channel != 'mix' and int(channel) >= src.channels:
                 raise ValueError('Der gewählte Kanal fehlt in der Aufnahme.')
@@ -64,7 +65,7 @@ def enhance(source, destination=None, attenuation=18, stem=None, channel=0):
                     clean.write(y[:n])
                     samples += n
 
-            for block in src.blocks(blocksize=1 << 15, dtype='float32', always_2d=True):
+            for block in src.blocks(blocksize=1 << 15, dtype='float32'):
                 x = block.mean(axis=1) if channel == 'mix' else block[:, int(channel)]
                 x = np.ascontiguousarray(x, dtype=np.float32)
                 run(resampler.resample_chunk(x) if resampler else x)

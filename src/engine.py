@@ -242,10 +242,11 @@ class Capture:
         """
         if self.channels < 2 or self.channel_difference > tolerance or not self.native_frames:
             return False
+        import lecture
         mono = self.native_path.with_suffix('.mono.tmp')
-        with sf.SoundFile(str(self.native_path)) as src, sf.SoundFile(str(mono), 'w', samplerate=src.samplerate,
+        with lecture.PcmFile(self.native_path) as src, sf.SoundFile(str(mono), 'w', samplerate=src.samplerate,
                 channels=1, subtype='PCM_32', format='WAV') as dst:
-            for block in src.blocks(blocksize=1 << 16, dtype='int32', always_2d=True):
+            for block in src.blocks(dtype='int32'):
                 dst.write(np.ascontiguousarray(block[:, :1]))
         mono.replace(self.native_path)
         self.channels = 1
